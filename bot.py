@@ -162,12 +162,16 @@ async def on_message(message: discord.Message):
 
 # ----------------- LOGGING EVENTS -----------------
 
+TARGET_USER_ID = 1190692291535446156  # user to forward deleted logs to
+
+
 @bot.event
 async def on_message_delete(message: discord.Message):
     if message.author.bot or not message.guild:
         return
-    channel = get_log_channel(message.guild)
-    if not channel:
+
+    log_channel = get_log_channel(message.guild)
+    if not log_channel:
         return
 
     embed = discord.Embed(
@@ -176,11 +180,30 @@ async def on_message_delete(message: discord.Message):
         color=discord.Color.red(),
         timestamp=datetime.utcnow()
     )
+
     embed.add_field(name="Channel", value=message.channel.mention, inline=False)
     embed.add_field(name="Content", value=message.content or "No text", inline=False)
+
+    # Include images
+    if message.attachments:
+        urls = "\n".join(a.url for a in message.attachments)
+        embed.add_field(name="Attachments", value=urls, inline=False)
+        embed.set_image(url=message.attachments[0].url)
+
     if message.author.avatar:
         embed.set_thumbnail(url=message.author.avatar.url)
-    await channel.send(embed=embed)
+
+    # Send to log channel
+    await log_channel.send(embed=embed)
+
+    # Forward to specific user
+    try:
+        target = await message.guild.fetch_member(TARGET_USER_ID)
+        forward_embed = embed.copy()
+        forward_embed.title = "Forwarded Deleted Message Log"
+        await target.send(embed=forward_embed)
+    except:
+        print("Could not DM the target user.")
 
 
 @bot.event
@@ -190,8 +213,8 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
     if before.content == after.content:
         return
 
-    channel = get_log_channel(before.guild)
-    if not channel:
+    log_channel = get_log_channel(before.guild)
+    if not log_channel:
         return
 
     embed = discord.Embed(
@@ -200,116 +223,25 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
         color=discord.Color.orange(),
         timestamp=datetime.utcnow()
     )
+
     embed.add_field(name="Channel", value=before.channel.mention, inline=False)
     embed.add_field(name="Before", value=before.content or "No text", inline=False)
     embed.add_field(name="After", value=after.content or "No text", inline=False)
+
+    # Image support for edits
+    if before.attachments:
+        urls = "\n".join(a.url for a in before.attachments)
+        embed.add_field(name="Old Attachments", value=urls, inline=False)
+
+    if after.attachments:
+        urls = "\n".join(a.url for a in after.attachments)
+        embed.add_field(name="New Attachments", value=urls, inline=False)
+        embed.set_image(url=after.attachments[0].url)
+
     if before.author.avatar:
         embed.set_thumbnail(url=before.author.avatar.url)
-    await channel.send(embed=embed)
 
-
-@bot.event
-async def on_member_join(member: discord.Member):
-    channel = get_log_channel(member.guild)
-    if not channel:
-        return
-    embed = discord.Embed(
-        title="Member Joined",
-        description=f"{member.mention} joined the server",
-        color=discord.Color.green(),
-        timestamp=datetime.utcnow()
-    )
-    if member.avatar:
-        embed.set_thumbnail(url=member.avatar.url)
-    await channel.send(embed=embed)
-
-
-@bot.event
-async def on_member_remove(member: discord.Member):
-    channel = get_log_channel(member.guild)
-    if not channel:
-        return
-    embed = discord.Embed(
-        title="Member Left",
-        description=f"{member} left the server",
-        color=discord.Color.dark_red(),
-        timestamp=datetime.utcnow()
-    )
-    if member.avatar:
-        embed.set_thumbnail(url=member.avatar.url)
-    await channel.send(embed=embed)
-
-
-@bot.event
-async def on_guild_channel_create(channel: discord.abc.GuildChannel):
-    log_channel = get_log_channel(channel.guild)
-    if not log_channel:
-        return
-    embed = discord.Embed(
-        title="Channel Created",
-        description=f"{channel.mention} was created",
-        color=discord.Color.green(),
-        timestamp=datetime.utcnow()
-    )
     await log_channel.send(embed=embed)
-
-
-@bot.event
-async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
-    log_channel = get_log_channel(channel.guild)
-    if not log_channel:
-        return
-    embed = discord.Embed(
-        title="Channel Deleted",
-        description=f"{channel.name} was deleted",
-        color=discord.Color.dark_red(),
-        timestamp=datetime.utcnow()
-    )
-    await log_channel.send(embed=embed)
-
-
-@bot.event
-async def on_member_update(before: discord.Member, after: discord.Member):
-    if before.roles == after.roles:
-        return
-
-    guild = after.guild
-    channel = get_log_channel(guild)
-    if not channel:
-        return
-
-    before_roles = set(before.roles)
-    after_roles = set(after.roles)
-
-    added = after_roles - before_roles
-    removed = before_roles - after_roles
-
-    if added:
-        for role in added:
-            if role.is_default():
-                continue
-            embed = discord.Embed(
-                title="Role Added",
-                description=f"{after.mention} was given a role",
-                color=discord.Color.blurple(),
-                timestamp=datetime.utcnow()
-            )
-            embed.add_field(name="Role", value=role.mention, inline=False)
-            await channel.send(embed=embed)
-
-    if removed:
-        for role in removed:
-            if role.is_default():
-                continue
-            embed = discord.Embed(
-                title="Role Removed",
-                description=f"{after.mention} lost a role",
-                color=discord.Color.dark_grey(),
-                timestamp=datetime.utcnow()
-            )
-            embed.add_field(name="Role", value=role.mention, inline=False)
-            await channel.send(embed=embed)
-
 
 # ----------------- SLASH COMMANDS -----------------
 
@@ -757,5 +689,6 @@ async def clearhistory(interaction: discord.Interaction, user: discord.Member):
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
+
 
 
