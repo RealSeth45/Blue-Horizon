@@ -7,15 +7,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
-import aiohttp
 
-async def send_webhook_log(message: str):
-    url = os.getenv("WEBHOOK_URL")
-    if not url:
-        return
-
-    async with aiohttp.ClientSession() as session:
-        await session.post(url, json={"content": message})
 # ----------------- CONFIG -----------------
 
 load_dotenv()
@@ -763,7 +755,7 @@ async def clearhistory(interaction: discord.Interaction, user: discord.Member):
     )
 
 # ----------------- RUN -----------------
-await send_webhook_log("🚀 Blue Horizon is now online.")
 
 bot.run(TOKEN)
+
 
