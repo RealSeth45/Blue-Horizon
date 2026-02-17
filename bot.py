@@ -763,6 +763,7 @@ async def clearhistory(interaction: discord.Interaction, user: discord.Member):
     )
 
 # ----------------- RUN -----------------
-
+await send_webhook_log("🚀 Blue Horizon is now online.")
 
 bot.run(TOKEN)
+
