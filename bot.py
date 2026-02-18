@@ -19,7 +19,7 @@ LOG_CHANNEL_NAME = "bluehorizon-logs"   # log channel name
 DB_PATH = "moderation.db"
 
 OWNER_ID = 1190692291535446156          # you
-BETA_ROLE_ID = 1473745556198260890       # TODO: replace with your real beta role ID
+BETA_ROLE_ID = 1473745556198260890      # real beta role ID
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -157,8 +157,31 @@ async def on_ready():
 
 @bot.event
 async def on_message(message: discord.Message):
-    if isinstance(message.channel, discord.DMChannel):
+    if message.author.bot:
         return
+
+    # Ignore replies completely
+    if message.reference is not None:
+        await bot.process_commands(message)
+        return
+
+    # ----------------- OWNERSHIP PING PROTECTION -----------------
+    ownership_ids = {650411480017141770, 797497654451765279, 1190692291535446156}
+    mentioned_ids = {user.id for user in message.mentions}
+
+    if ownership_ids.intersection(mentioned_ids):
+        embed = discord.Embed(
+            title="Notice Regarding Pings",
+            description=(
+                "Please avoid pinging ownership unless absolutely necessary. "
+                "They are often handling critical tasks and may not be available to respond immediately.\n\n"
+                "Continued misuse of pings may result in moderation action."
+            ),
+            color=discord.Color.red()
+        )
+        embed.set_footer(text="Blue Horizon Moderation Team")
+        await message.channel.send(embed=embed)
+
     await bot.process_commands(message)
 
 
@@ -184,12 +207,12 @@ async def on_message_delete(message: discord.Message):
             if message.embeds:
                 for embed in message.embeds:
                     forwarded = embed.copy()
-                    forwarded.title = "⚠️ A Log Message Was Deleted"
+                    forwarded.title = "A Log Message Was Deleted"
                     await target.send(embed=forwarded)
 
             if message.content:
                 await target.send(
-                    f"⚠️ A log message was deleted in {log_channel.mention}:\n\n{message.content}"
+                    f"A log message was deleted in {log_channel.mention}:\n\n{message.content}"
                 )
 
         except Exception as e:
@@ -225,7 +248,7 @@ async def on_message_delete(message: discord.Message):
 async def on_message_edit(before: discord.Message, after: discord.Message):
     if before.author.bot or not before.guild:
         return
-    if before.content == after.content:
+    if before.content == after.content and before.attachments == after.attachments:
         return
 
     log_channel = get_log_channel(before.guild)
@@ -371,46 +394,6 @@ async def on_member_update(before: discord.Member, after: discord.Member):
 
         await log_channel.send(embed=embed)
 
-# ---------------------- Yes ---------------------
-
-#---------------- Trigger --------------------------
-
-@bot.event
-async def on_message(message: discord.Message):
-    if message.author.bot:
-        return
-
-    # Ignore replies
-    if message.reference is not None:
-        await bot.process_commands(message)
-        return
-
-    content = message.content.lower()
-
-
-    # ----------------- NAME TRIGGER -----------------
-
- ownership_ids = {650411480017141770, 797497654451765279, 1190692291535446156}
-
-    mentioned_ids = {user.id for user in message.mentions}
-
-    if ownership_ids.intersection(mentioned_ids):
-        embed = discord.Embed(
-            title="Notice Regarding Pings",
-            description=(
-                "Please avoid pinging ownership unless absolutely necessary. "
-                "They are often handling critical tasks and may not be available to respond immediately.\n\n"
-                "Continued misuse of pings may result in moderation action."
-            ),
-            color=discord.Color.red()
-        )
-        embed.set_footer(text="Blue Horizon Moderation Team")
-        await message.channel.send(embed=embed)
-
-    # Keep slash commands working
-    await bot.process_commands(message)
-
-
 
 # ----------------- SLASH COMMANDS -----------------
 
@@ -419,7 +402,8 @@ guild_obj = discord.Object(id=GUILD_ID)
 
 @tree.command(name="ping", description="Check if the bot is alive.", guild=guild_obj)
 async def ping(interaction: discord.Interaction):
-    await interaction.response.send_message("Pong!", ephemeral=True)
+    await interaction.response.send_message("Pong.", ephemeral=True)
+
 
 # ----------------- MODERATION: TIMEOUT -----------------
 
@@ -698,7 +682,7 @@ async def history(
     for case_id, action, reason, mod_id, ts in rows:
         embed.add_field(
             name=f"Case #{case_id} | {action.upper()}",
-            value=f"**Moderator:** <@{mod_id}>\n**Reason:** {reason}\n**Time:** {ts}",
+            value=f"Moderator: <@{mod_id}>\nReason: {reason}\nTime: {ts}",
             inline=False
         )
 
@@ -859,7 +843,7 @@ async def roleassign(interaction: discord.Interaction, user: discord.Member, rol
         await log_channel.send(embed=embed)
 
     await interaction.response.send_message(
-        f"Role **{role.name}** has been **{action}** for {user.mention}.",
+        f"Role {role.name} has been {action} for {user.mention}.",
         ephemeral=True
     )
 
@@ -884,7 +868,7 @@ async def beta(interaction: discord.Interaction, user: discord.Member):
     await user.add_roles(beta_role, reason=f"Beta access granted by {interaction.user}")
 
     await interaction.response.send_message(
-        f"{user.mention} has been granted **Beta Access**.",
+        f"{user.mention} has been granted Beta Access.",
         ephemeral=True
     )
 
@@ -900,7 +884,8 @@ async def beta(interaction: discord.Interaction, user: discord.Member):
         embed.add_field(name="Role", value=beta_role.mention, inline=False)
         await log_channel.send(embed=embed)
 
-#----- Purge -----
+
+# ----------------- ADVANCED PURGE -----------------
 
 @tree.command(name="purge", description="Advanced message purge system.", guild=guild_obj)
 @staff_only()
@@ -925,10 +910,9 @@ async def purge(
     await interaction.response.defer(ephemeral=True)
 
     if amount < 1 or amount > 5000:
-        await interaction.followup.send("Amount must be between **1** and **5000**.", ephemeral=True)
+        await interaction.followup.send("Amount must be between 1 and 5000.", ephemeral=True)
         return
 
-    # Parse "after" message link
     after_message = None
     if after:
         try:
@@ -963,7 +947,6 @@ async def purge(
         deleted_total += len(deleted)
         remaining -= len(deleted)
 
-    # Log the purge
     log_channel = get_log_channel(interaction.guild)
     if log_channel:
         embed = discord.Embed(
@@ -989,17 +972,13 @@ async def purge(
         await log_channel.send(embed=embed)
 
     await interaction.followup.send(
-        f"Purged **{deleted_total}** messages.",
+        f"Purged {deleted_total} messages.",
         ephemeral=True
     )
+
+
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
-
-
-
-
-
-
 
 
