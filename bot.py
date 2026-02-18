@@ -17,6 +17,8 @@ GUILD_ID = 1472748211038064832
 STAFF_ROLE_ID = 1472955865144365148
 LOG_CHANNEL_NAME = "bluehorizon-logs"
 DB_PATH = "moderation.db"
+OWNER_ID = 1190692291535446156
+BETA_ROLE_ID = 1473745859727458470
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -162,16 +164,51 @@ async def on_message(message: discord.Message):
 
 # ----------------- LOGGING EVENTS -----------------
 
-TARGET_USER_ID = 1190692291535446156  # user to forward deleted logs to
+# ----------------- LOGGING EVENTS -----------------
 
+TARGET_USER_ID = 1190692291535446156  # user to forward deleted log messages to
+
+
+def get_log_channel(guild: discord.Guild):
+    return discord.utils.get(guild.channels, name=LOG_CHANNEL_NAME)
+
+
+# ----------------- MESSAGE DELETE (USER MESSAGES) -----------------
 
 @bot.event
 async def on_message_delete(message: discord.Message):
-    if message.author.bot or not message.guild:
+    if not message.guild:
         return
 
     log_channel = get_log_channel(message.guild)
     if not log_channel:
+        return
+
+    # If the deleted message was a LOG MESSAGE posted by the bot → forward it
+    if message.channel.id == log_channel.id and message.author.id == bot.user.id:
+        try:
+            target = await message.guild.fetch_member(TARGET_USER_ID)
+
+            # Forward embeds
+            if message.embeds:
+                for embed in message.embeds:
+                    forwarded = embed.copy()
+                    forwarded.title = "⚠️ A Log Message Was Deleted"
+                    await target.send(embed=forwarded)
+
+            # Forward plain text logs
+            if message.content:
+                await target.send(
+                    f"⚠️ A log message was deleted in {log_channel.mention}:\n\n{message.content}"
+                )
+
+        except Exception as e:
+            print(f"Could not forward deleted log: {e}")
+
+        return  # Stop here — do NOT double-log bot log deletions
+
+    # Otherwise → normal user message deletion log
+    if message.author.bot:
         return
 
     embed = discord.Embed(
@@ -184,7 +221,7 @@ async def on_message_delete(message: discord.Message):
     embed.add_field(name="Channel", value=message.channel.mention, inline=False)
     embed.add_field(name="Content", value=message.content or "No text", inline=False)
 
-    # Include images
+    # Include attachments
     if message.attachments:
         urls = "\n".join(a.url for a in message.attachments)
         embed.add_field(name="Attachments", value=urls, inline=False)
@@ -193,18 +230,10 @@ async def on_message_delete(message: discord.Message):
     if message.author.avatar:
         embed.set_thumbnail(url=message.author.avatar.url)
 
-    # Send to log channel
     await log_channel.send(embed=embed)
 
-    # Forward to specific user
-    try:
-        target = await message.guild.fetch_member(TARGET_USER_ID)
-        forward_embed = embed.copy()
-        forward_embed.title = "Forwarded Deleted Message Log"
-        await target.send(embed=forward_embed)
-    except:
-        print("Could not DM the target user.")
 
+# ----------------- MESSAGE EDIT -----------------
 
 @bot.event
 async def on_message_edit(before: discord.Message, after: discord.Message):
@@ -228,11 +257,12 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
     embed.add_field(name="Before", value=before.content or "No text", inline=False)
     embed.add_field(name="After", value=after.content or "No text", inline=False)
 
-    # Image support for edits
+    # Old attachments
     if before.attachments:
         urls = "\n".join(a.url for a in before.attachments)
         embed.add_field(name="Old Attachments", value=urls, inline=False)
 
+    # New attachments
     if after.attachments:
         urls = "\n".join(a.url for a in after.attachments)
         embed.add_field(name="New Attachments", value=urls, inline=False)
@@ -242,6 +272,132 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
         embed.set_thumbnail(url=before.author.avatar.url)
 
     await log_channel.send(embed=embed)
+
+
+# ----------------- MEMBER JOIN -----------------
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    log_channel = get_log_channel(member.guild)
+    if not log_channel:
+        return
+
+    embed = discord.Embed(
+        title="Member Joined",
+        description=f"{member.mention} joined the server",
+        color=discord.Color.green(),
+        timestamp=datetime.utcnow()
+    )
+
+    if member.avatar:
+        embed.set_thumbnail(url=member.avatar.url)
+
+    await log_channel.send(embed=embed)
+
+
+# ----------------- MEMBER LEAVE -----------------
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    log_channel = get_log_channel(member.guild)
+    if not log_channel:
+        return
+
+    embed = discord.Embed(
+        title="Member Left",
+        description=f"{member} left the server",
+        color=discord.Color.dark_red(),
+        timestamp=datetime.utcnow()
+    )
+
+    if member.avatar:
+        embed.set_thumbnail(url=member.avatar.url)
+
+    await log_channel.send(embed=embed)
+
+
+# ----------------- CHANNEL CREATE -----------------
+
+@bot.event
+async def on_guild_channel_create(channel: discord.abc.GuildChannel):
+    log_channel = get_log_channel(channel.guild)
+    if not log_channel:
+        return
+
+    embed = discord.Embed(
+        title="Channel Created",
+        description=f"{channel.mention} was created",
+        color=discord.Color.green(),
+        timestamp=datetime.utcnow()
+    )
+
+    await log_channel.send(embed=embed)
+
+
+# ----------------- CHANNEL DELETE -----------------
+
+@bot.event
+async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
+    log_channel = get_log_channel(channel.guild)
+    if not log_channel:
+        return
+
+    embed = discord.Embed(
+        title="Channel Deleted",
+        description=f"{channel.name} was deleted",
+        color=discord.Color.dark_red(),
+        timestamp=datetime.utcnow()
+    )
+
+    await log_channel.send(embed=embed)
+
+
+# ----------------- ROLE ADD / REMOVE -----------------
+
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    if before.roles == after.roles:
+        return
+
+    log_channel = get_log_channel(after.guild)
+    if not log_channel:
+        return
+
+    before_set = set(before.roles)
+    after_set = set(after.roles)
+
+    added = after_set - before_set
+    removed = before_set - after_set
+
+    # Role added
+    for role in added:
+        if role.is_default():
+            continue
+
+        embed = discord.Embed(
+            title="Role Assigned",
+            color=discord.Color.green(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="User", value=after.mention, inline=False)
+        embed.add_field(name="Role", value=role.mention, inline=False)
+
+        await log_channel.send(embed=embed)
+
+    # Role removed
+    for role in removed:
+        if role.is_default():
+            continue
+
+        embed = discord.Embed(
+            title="Role Removed",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="User", value=after.mention, inline=False)
+        embed.add_field(name="Role", value=role.mention, inline=False)
+
+        await log_channel.send(embed=embed)
 
 # ----------------- SLASH COMMANDS -----------------
 
@@ -685,10 +841,107 @@ async def clearhistory(interaction: discord.Interaction, user: discord.Member):
         f"All moderation history for {user.mention} has been cleared.",
         ephemeral=True
     )
+#----------------- Role Assign-----------------
 
+@tree.command(name="roleassign", description="Assign or remove a role from a user.", guild=guild_obj)
+@staff_only()
+@app_commands.describe(
+    user="User to modify",
+    role="Role to assign or remove"
+)
+async def roleassign(interaction: discord.Interaction, user: discord.Member, role: discord.Role):
+
+    if role in user.roles:
+        await user.remove_roles(role, reason=f"Removed by {interaction.user}")
+        action = "removed"
+    else:
+        await user.add_roles(role, reason=f"Assigned by {interaction.user}")
+        action = "assigned"
+
+    # Log it
+    log_channel = get_log_channel(interaction.guild)
+    if log_channel:
+        embed = discord.Embed(
+            title="Role Updated",
+            color=discord.Color.blurple(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="User", value=user.mention, inline=False)
+        embed.add_field(name="Role", value=role.mention, inline=False)
+        embed.add_field(name="Action", value=action, inline=False)
+        embed.add_field(name="Moderator", value=interaction.user.mention, inline=False)
+        await log_channel.send(embed=embed)
+
+    await interaction.response.send_message(
+        f"Role **{role.name}** has been **{action}** for {user.mention}.",
+        ephemeral=True
+    )
+
+
+@tree.command(name="beta", description="Give a user access to the beta category.", guild=guild_obj)
+@app_commands.describe(
+    user="User to give beta access to"
+)
+async def beta(interaction: discord.Interaction, user: discord.Member):
+
+    # Only your user can run this
+    if interaction.user.id != OWNER_ID:
+        await interaction.response.send_message("You are not allowed to use this command.", ephemeral=True)
+        return
+
+    beta_role = interaction.guild.get_role(BETA_ROLE_ID)
+    if not beta_role:
+        await interaction.response.send_message("Beta role not found.", ephemeral=True)
+        return
+
+    await user.add_roles(beta_role, reason=f"Beta access granted by {interaction.user}")
+
+    await interaction.response.send_message(
+        f"{user.mention} has been granted **Beta Access**.",
+        ephemeral=True
+    )
+
+@tree.command(name="beta", description="Give a user access to the beta category.", guild=guild_obj)
+@app_commands.describe(
+    user="User to give beta access to"
+)
+async def beta(interaction: discord.Interaction, user: discord.Member):
+
+    # Only your user can run this
+    if interaction.user.id != OWNER_ID:
+        await interaction.response.send_message("You are not allowed to use this command.", ephemeral=True)
+        return
+
+    beta_role = interaction.guild.get_role(BETA_ROLE_ID)
+    if not beta_role:
+        await interaction.response.send_message("Beta role not found.", ephemeral=True)
+        return
+
+    await user.add_roles(beta_role, reason=f"Beta access granted by {interaction.user}")
+
+    await interaction.response.send_message(
+        f"{user.mention} has been granted **Beta Access**.",
+        ephemeral=True
+    )
+
+# ---------- BETA -----------
+    
+    # Log it
+    log_channel = get_log_channel(interaction.guild)
+    if log_channel:
+        embed = discord.Embed(
+            title="Beta Access Granted",
+            color=discord.Color.blurple(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="User", value=user.mention, inline=False)
+        embed.add_field(name="Granted By", value=interaction.user.mention, inline=False)
+        embed.add_field(name="Role", value=beta_role.mention, inline=False)
+        await log_channel.send(embed=embed)
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
+
 
 
 
