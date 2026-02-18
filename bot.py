@@ -387,12 +387,17 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
+    # Ignore replies
+    if message.reference is not None:
+        await bot.process_commands(message)
+        return
+
     content = message.content.lower()
+
 
     # ----------------- NAME TRIGGER -----------------
 
-    # ----------------- OWNERSHIP PING PROTECTION -----------------
-    ownership_ids = {650411480017141770, 797497654451765279, 1190692291535446156}
+ ownership_ids = {650411480017141770, 797497654451765279, 1190692291535446156}
 
     mentioned_ids = {user.id for user in message.mentions}
 
@@ -411,6 +416,8 @@ async def on_message(message: discord.Message):
 
     # Keep slash commands working
     await bot.process_commands(message)
+
+
 # ----------------- MODERATION: TIMEOUT -----------------
 
 @tree.command(name="timeout", description="Timeout a member for a duration.", guild=guild_obj)
@@ -985,6 +992,7 @@ async def purge(
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
+
 
 
 
