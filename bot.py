@@ -380,7 +380,37 @@ guild_obj = discord.Object(id=GUILD_ID)
 async def ping(interaction: discord.Interaction):
     await interaction.response.send_message("Pong!", ephemeral=True)
 
+#---------------- Trigger --------------------------
 
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
+
+    content = message.content.lower()
+
+    # ----------------- NAME TRIGGER -----------------
+
+    # ----------------- OWNERSHIP PING PROTECTION -----------------
+    ownership_ids = {650411480017141770, 797497654451765279, 1190692291535446156}
+
+    mentioned_ids = {user.id for user in message.mentions}
+
+    if ownership_ids.intersection(mentioned_ids):
+        embed = discord.Embed(
+            title="Notice Regarding Pings",
+            description=(
+                "Please avoid pinging ownership unless absolutely necessary. "
+                "They are often handling critical tasks and may not be available to respond immediately.\n\n"
+                "Continued misuse of pings may result in moderation action."
+            ),
+            color=discord.Color.red()
+        )
+        embed.set_footer(text="Blue Horizon Moderation Team")
+        await message.channel.send(embed=embed)
+
+    # Keep slash commands working
+    await bot.process_commands(message)
 # ----------------- MODERATION: TIMEOUT -----------------
 
 @tree.command(name="timeout", description="Timeout a member for a duration.", guild=guild_obj)
@@ -955,6 +985,7 @@ async def purge(
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
+
 
 
 
