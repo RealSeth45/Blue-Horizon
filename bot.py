@@ -19,7 +19,7 @@ LOG_CHANNEL_NAME = "bluehorizon-logs"   # log channel name
 DB_PATH = "moderation.db"
 
 OWNER_ID = 1190692291535446156          # you
-BETA_ROLE_ID = 123456789012345678       # TODO: replace with your real beta role ID
+BETA_ROLE_ID = 1473745859727458470       # TODO: replace with your real beta role ID
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -865,3 +865,4 @@ async def beta(interaction: discord.Interaction, user: discord.Member):
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
+
