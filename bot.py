@@ -861,9 +861,101 @@ async def beta(interaction: discord.Interaction, user: discord.Member):
         embed.add_field(name="Role", value=beta_role.mention, inline=False)
         await log_channel.send(embed=embed)
 
+#----- Purge -----
 
+@tree.command(name="purge", description="Advanced message purge system.", guild=guild_obj)
+@staff_only()
+@app_commands.describe(
+    amount="How many messages to delete (1–5000)",
+    user="Only delete messages from this user",
+    contains="Only delete messages containing this text",
+    bots="Delete only bot messages",
+    images="Delete only messages with attachments",
+    after="Delete messages after this message link"
+)
+async def purge(
+    interaction: discord.Interaction,
+    amount: int,
+    user: discord.Member | None = None,
+    contains: str | None = None,
+    bots: bool = False,
+    images: bool = False,
+    after: str | None = None
+):
+
+    await interaction.response.defer(ephemeral=True)
+
+    if amount < 1 or amount > 5000:
+        await interaction.followup.send("Amount must be between **1** and **5000**.", ephemeral=True)
+        return
+
+    # Parse "after" message link
+    after_message = None
+    if after:
+        try:
+            parts = after.split("/")
+            msg_id = int(parts[-1])
+            after_message = await interaction.channel.fetch_message(msg_id)
+        except:
+            await interaction.followup.send("Invalid message link.", ephemeral=True)
+            return
+
+    def check(msg: discord.Message):
+        if after_message and msg.id <= after_message.id:
+            return False
+        if user and msg.author != user:
+            return False
+        if contains and contains.lower() not in msg.content.lower():
+            return False
+        if bots and not msg.author.bot:
+            return False
+        if images and not msg.attachments:
+            return False
+        return True
+
+    deleted_total = 0
+    remaining = amount
+
+    while remaining > 0:
+        batch_size = min(remaining, 100)
+        deleted = await interaction.channel.purge(limit=batch_size, check=check)
+        if not deleted:
+            break
+        deleted_total += len(deleted)
+        remaining -= len(deleted)
+
+    # Log the purge
+    log_channel = get_log_channel(interaction.guild)
+    if log_channel:
+        embed = discord.Embed(
+            title="Messages Purged",
+            color=discord.Color.dark_red(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="Moderator", value=interaction.user.mention, inline=False)
+        embed.add_field(name="Channel", value=interaction.channel.mention, inline=False)
+        embed.add_field(name="Amount", value=str(deleted_total), inline=False)
+
+        if user:
+            embed.add_field(name="Filtered User", value=user.mention, inline=False)
+        if contains:
+            embed.add_field(name="Contains", value=contains, inline=False)
+        if bots:
+            embed.add_field(name="Bots Only", value="True", inline=False)
+        if images:
+            embed.add_field(name="Images Only", value="True", inline=False)
+        if after_message:
+            embed.add_field(name="After Message", value=f"[Jump]({after})", inline=False)
+
+        await log_channel.send(embed=embed)
+
+    await interaction.followup.send(
+        f"Purged **{deleted_total}** messages.",
+        ephemeral=True
+    )
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
+
 
 
