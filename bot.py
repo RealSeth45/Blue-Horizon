@@ -371,14 +371,7 @@ async def on_member_update(before: discord.Member, after: discord.Member):
 
         await log_channel.send(embed=embed)
 
-# ----------------- SLASH COMMANDS -----------------
-
-guild_obj = discord.Object(id=GUILD_ID)
-
-
-@tree.command(name="ping", description="Check if the bot is alive.", guild=guild_obj)
-async def ping(interaction: discord.Interaction):
-    await interaction.response.send_message("Pong!", ephemeral=True)
+# ---------------------- Yes ---------------------
 
 #---------------- Trigger --------------------------
 
@@ -417,6 +410,16 @@ async def on_message(message: discord.Message):
     # Keep slash commands working
     await bot.process_commands(message)
 
+
+
+# ----------------- SLASH COMMANDS -----------------
+
+guild_obj = discord.Object(id=GUILD_ID)
+
+
+@tree.command(name="ping", description="Check if the bot is alive.", guild=guild_obj)
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message("Pong!", ephemeral=True)
 
 # ----------------- MODERATION: TIMEOUT -----------------
 
@@ -992,6 +995,7 @@ async def purge(
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
+
 
 
 
