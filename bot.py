@@ -13,12 +13,13 @@ from dotenv import load_dotenv
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
-GUILD_ID = 1472748211038064832
-STAFF_ROLE_ID = 1472955865144365148
-LOG_CHANNEL_NAME = "bluehorizon-logs"
+GUILD_ID = 1472748211038064832          # your guild ID
+STAFF_ROLE_ID = 1472955865144365148     # staff role ID
+LOG_CHANNEL_NAME = "bluehorizon-logs"   # log channel name
 DB_PATH = "moderation.db"
-OWNER_ID = 1190692291535446156
-BETA_ROLE_ID = 1473745859727458470
+
+OWNER_ID = 1190692291535446156          # you
+BETA_ROLE_ID = 123456789012345678       # TODO: replace with your real beta role ID
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -27,7 +28,6 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
-
 
 # ----------------- DATABASE -----------------
 
@@ -131,7 +131,7 @@ async def send_dm(user: discord.User, embed: discord.Embed):
     try:
         await user.send(embed=embed)
     except:
-        pass  # ignore closed DMs
+        pass
 
 
 def staff_only():
@@ -164,16 +164,8 @@ async def on_message(message: discord.Message):
 
 # ----------------- LOGGING EVENTS -----------------
 
-# ----------------- LOGGING EVENTS -----------------
+TARGET_USER_ID = OWNER_ID  # forward deleted log messages to you
 
-TARGET_USER_ID = 1190692291535446156  # user to forward deleted log messages to
-
-
-def get_log_channel(guild: discord.Guild):
-    return discord.utils.get(guild.channels, name=LOG_CHANNEL_NAME)
-
-
-# ----------------- MESSAGE DELETE (USER MESSAGES) -----------------
 
 @bot.event
 async def on_message_delete(message: discord.Message):
@@ -189,14 +181,12 @@ async def on_message_delete(message: discord.Message):
         try:
             target = await message.guild.fetch_member(TARGET_USER_ID)
 
-            # Forward embeds
             if message.embeds:
                 for embed in message.embeds:
                     forwarded = embed.copy()
                     forwarded.title = "⚠️ A Log Message Was Deleted"
                     await target.send(embed=forwarded)
 
-            # Forward plain text logs
             if message.content:
                 await target.send(
                     f"⚠️ A log message was deleted in {log_channel.mention}:\n\n{message.content}"
@@ -205,9 +195,8 @@ async def on_message_delete(message: discord.Message):
         except Exception as e:
             print(f"Could not forward deleted log: {e}")
 
-        return  # Stop here — do NOT double-log bot log deletions
+        return
 
-    # Otherwise → normal user message deletion log
     if message.author.bot:
         return
 
@@ -221,7 +210,6 @@ async def on_message_delete(message: discord.Message):
     embed.add_field(name="Channel", value=message.channel.mention, inline=False)
     embed.add_field(name="Content", value=message.content or "No text", inline=False)
 
-    # Include attachments
     if message.attachments:
         urls = "\n".join(a.url for a in message.attachments)
         embed.add_field(name="Attachments", value=urls, inline=False)
@@ -232,8 +220,6 @@ async def on_message_delete(message: discord.Message):
 
     await log_channel.send(embed=embed)
 
-
-# ----------------- MESSAGE EDIT -----------------
 
 @bot.event
 async def on_message_edit(before: discord.Message, after: discord.Message):
@@ -257,12 +243,10 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
     embed.add_field(name="Before", value=before.content or "No text", inline=False)
     embed.add_field(name="After", value=after.content or "No text", inline=False)
 
-    # Old attachments
     if before.attachments:
         urls = "\n".join(a.url for a in before.attachments)
         embed.add_field(name="Old Attachments", value=urls, inline=False)
 
-    # New attachments
     if after.attachments:
         urls = "\n".join(a.url for a in after.attachments)
         embed.add_field(name="New Attachments", value=urls, inline=False)
@@ -273,8 +257,6 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
 
     await log_channel.send(embed=embed)
 
-
-# ----------------- MEMBER JOIN -----------------
 
 @bot.event
 async def on_member_join(member: discord.Member):
@@ -295,8 +277,6 @@ async def on_member_join(member: discord.Member):
     await log_channel.send(embed=embed)
 
 
-# ----------------- MEMBER LEAVE -----------------
-
 @bot.event
 async def on_member_remove(member: discord.Member):
     log_channel = get_log_channel(member.guild)
@@ -316,8 +296,6 @@ async def on_member_remove(member: discord.Member):
     await log_channel.send(embed=embed)
 
 
-# ----------------- CHANNEL CREATE -----------------
-
 @bot.event
 async def on_guild_channel_create(channel: discord.abc.GuildChannel):
     log_channel = get_log_channel(channel.guild)
@@ -333,8 +311,6 @@ async def on_guild_channel_create(channel: discord.abc.GuildChannel):
 
     await log_channel.send(embed=embed)
 
-
-# ----------------- CHANNEL DELETE -----------------
 
 @bot.event
 async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
@@ -352,8 +328,6 @@ async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
     await log_channel.send(embed=embed)
 
 
-# ----------------- ROLE ADD / REMOVE -----------------
-
 @bot.event
 async def on_member_update(before: discord.Member, after: discord.Member):
     if before.roles == after.roles:
@@ -369,7 +343,6 @@ async def on_member_update(before: discord.Member, after: discord.Member):
     added = after_set - before_set
     removed = before_set - after_set
 
-    # Role added
     for role in added:
         if role.is_default():
             continue
@@ -384,7 +357,6 @@ async def on_member_update(before: discord.Member, after: discord.Member):
 
         await log_channel.send(embed=embed)
 
-    # Role removed
     for role in removed:
         if role.is_default():
             continue
@@ -399,6 +371,7 @@ async def on_member_update(before: discord.Member, after: discord.Member):
 
         await log_channel.send(embed=embed)
 
+
 # ----------------- SLASH COMMANDS -----------------
 
 guild_obj = discord.Object(id=GUILD_ID)
@@ -409,7 +382,7 @@ async def ping(interaction: discord.Interaction):
     await interaction.response.send_message("Pong!", ephemeral=True)
 
 
-# ----------------- TIMEOUT -----------------
+# ----------------- MODERATION: TIMEOUT -----------------
 
 @tree.command(name="timeout", description="Timeout a member for a duration.", guild=guild_obj)
 @staff_only()
@@ -469,7 +442,7 @@ async def timeout(
     )
 
 
-# ----------------- UNTIMEOUT -----------------
+# ----------------- MODERATION: UNTIMEOUT -----------------
 
 @tree.command(name="untimeout", description="Remove timeout from a member.", guild=guild_obj)
 @staff_only()
@@ -517,7 +490,7 @@ async def untimeout(
     )
 
 
-# ----------------- BAN -----------------
+# ----------------- MODERATION: BAN -----------------
 
 @tree.command(name="ban", description="Ban a member.", guild=guild_obj)
 @staff_only()
@@ -565,7 +538,7 @@ async def ban(
     )
 
 
-# ----------------- KICK -----------------
+# ----------------- MODERATION: KICK -----------------
 
 @tree.command(name="kick", description="Kick a member.", guild=guild_obj)
 @staff_only()
@@ -613,7 +586,7 @@ async def kick(
     )
 
 
-# ----------------- WARN -----------------
+# ----------------- MODERATION: WARN -----------------
 
 @tree.command(name="warn", description="Warn a member.", guild=guild_obj)
 @staff_only()
@@ -658,37 +631,17 @@ async def warn(
     )
 
 
-# ----------------- HISTORY -----------------
-
-class HistoryButtons(discord.ui.View):
-    def __init__(self, user: discord.Member):
-        super().__init__(timeout=None)
-        self.user = user
-
-    @discord.ui.button(label="Clear All History", style=discord.ButtonStyle.danger)
-    async def clear_all(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not any(role.id == STAFF_ROLE_ID for role in interaction.user.roles):
-            await interaction.response.send_message("You do not have permission.", ephemeral=True)
-            return
-
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("DELETE FROM cases WHERE user_id = ?", (self.user.id,))
-        conn.commit()
-        conn.close()
-
-        await interaction.response.send_message(
-            f"All history for {self.user.mention} has been cleared.",
-            ephemeral=True
-        )
-
+# ----------------- MODERATION: HISTORY -----------------
 
 @tree.command(name="history", description="View a user's moderation history.", guild=guild_obj)
 @staff_only()
 @app_commands.describe(
     user="User to view history for"
 )
-async def history(interaction: discord.Interaction, user: discord.Member):
+async def history(
+    interaction: discord.Interaction,
+    user: discord.Member
+):
     rows = get_history(user.id, limit=10)
     if not rows:
         await interaction.response.send_message(
@@ -710,8 +663,59 @@ async def history(interaction: discord.Interaction, user: discord.Member):
             inline=False
         )
 
-    view = HistoryButtons(user)
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ----------------- MODERATION: REVOKE CASE -----------------
+
+@tree.command(name="revoke", description="Revoke a specific moderation case.", guild=guild_obj)
+@staff_only()
+@app_commands.describe(
+    case_id="The case ID to revoke"
+)
+async def revoke(interaction: discord.Interaction, case_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    c.execute("SELECT user_id, action, reason FROM cases WHERE id = ?", (case_id,))
+    row = c.fetchone()
+
+    if not row:
+        await interaction.response.send_message("Case not found.", ephemeral=True)
+        conn.close()
+        return
+
+    user_id, action, reason = row
+
+    c.execute("DELETE FROM cases WHERE id = ?", (case_id,))
+    conn.commit()
+    conn.close()
+
+    await interaction.response.send_message(
+        f"Case #{case_id} has been revoked.",
+        ephemeral=True
+    )
+
+
+# ----------------- MODERATION: CLEAR HISTORY -----------------
+
+@tree.command(name="clearhistory", description="Clear all moderation history for a user.", guild=guild_obj)
+@staff_only()
+@app_commands.describe(
+    user="User whose history will be cleared"
+)
+async def clearhistory(interaction: discord.Interaction, user: discord.Member):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    c.execute("DELETE FROM cases WHERE user_id = ?", (user.id,))
+    conn.commit()
+    conn.close()
+
+    await interaction.response.send_message(
+        f"All moderation history for {user.mention} has been cleared.",
+        ephemeral=True
+    )
 
 
 # ----------------- POLL -----------------
@@ -764,7 +768,7 @@ async def poll(
         await msg.add_reaction(POLL_EMOJIS[i])
 
 
-# ----------------- ANNOUNCE -----------------
+# ----------------- ANNOUNCE (TEXT ONLY) -----------------
 
 @tree.command(name="announce", description="Send an announcement to any channel.", guild=guild_obj)
 @staff_only()
@@ -777,71 +781,15 @@ async def announce(
     channel: discord.TextChannel,
     message: str
 ):
-    embed = discord.Embed(
-        title="Announcement",
-        description=message,
-        color=discord.Color.blurple(),
-        timestamp=datetime.utcnow()
-    )
-    embed.set_footer(text=f"Announcement by {interaction.user}", icon_url=interaction.user.display_avatar.url)
-
-    await channel.send(embed=embed)
     await channel.send(message)
 
     await interaction.response.send_message(
         f"Announcement sent in {channel.mention}.",
         ephemeral=True
     )
-@tree.command(name="revoke", description="Revoke a specific moderation case.", guild=guild_obj)
-@staff_only()
-@app_commands.describe(
-    case_id="The case ID to revoke"
-)
 
-# ----------------- REVOKE CASE -----------------
 
-async def revoke(interaction: discord.Interaction, case_id: int):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-
-    c.execute("SELECT user_id, action, reason FROM cases WHERE id = ?", (case_id,))
-    row = c.fetchone()
-
-    if not row:
-        await interaction.response.send_message("Case not found.", ephemeral=True)
-        conn.close()
-        return
-
-    user_id, action, reason = row
-
-    c.execute("DELETE FROM cases WHERE id = ?", (case_id,))
-    conn.commit()
-    conn.close()
-
-    await interaction.response.send_message(
-        f"Case #{case_id} has been revoked.",
-        ephemeral=True
-    )
-# ----------------- CLEAR HISTORY -----------------
-
-@tree.command(name="clearhistory", description="Clear all moderation history for a user.", guild=guild_obj)
-@staff_only()
-@app_commands.describe(
-    user="User whose history will be cleared"
-)
-async def clearhistory(interaction: discord.Interaction, user: discord.Member):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-
-    c.execute("DELETE FROM cases WHERE user_id = ?", (user.id,))
-    conn.commit()
-    conn.close()
-
-    await interaction.response.send_message(
-        f"All moderation history for {user.mention} has been cleared.",
-        ephemeral=True
-    )
-#----------------- Role Assign-----------------
+# ----------------- ROLEASSIGN -----------------
 
 @tree.command(name="roleassign", description="Assign or remove a role from a user.", guild=guild_obj)
 @staff_only()
@@ -858,7 +806,6 @@ async def roleassign(interaction: discord.Interaction, user: discord.Member, rol
         await user.add_roles(role, reason=f"Assigned by {interaction.user}")
         action = "assigned"
 
-    # Log it
     log_channel = get_log_channel(interaction.guild)
     if log_channel:
         embed = discord.Embed(
@@ -878,20 +825,21 @@ async def roleassign(interaction: discord.Interaction, user: discord.Member, rol
     )
 
 
+# ----------------- BETA ACCESS -----------------
+
 @tree.command(name="beta", description="Give a user access to the beta category.", guild=guild_obj)
 @app_commands.describe(
     user="User to give beta access to"
 )
 async def beta(interaction: discord.Interaction, user: discord.Member):
 
-    # Only your user can run this
     if interaction.user.id != OWNER_ID:
         await interaction.response.send_message("You are not allowed to use this command.", ephemeral=True)
         return
 
     beta_role = interaction.guild.get_role(BETA_ROLE_ID)
     if not beta_role:
-        await interaction.response.send_message("Beta role not found.", ephemeral=True)
+        await interaction.response.send_message("Beta role not found. Update BETA_ROLE_ID.", ephemeral=True)
         return
 
     await user.add_roles(beta_role, reason=f"Beta access granted by {interaction.user}")
@@ -901,32 +849,6 @@ async def beta(interaction: discord.Interaction, user: discord.Member):
         ephemeral=True
     )
 
-@tree.command(name="beta", description="Give a user access to the beta category.", guild=guild_obj)
-@app_commands.describe(
-    user="User to give beta access to"
-)
-async def beta(interaction: discord.Interaction, user: discord.Member):
-
-    # Only your user can run this
-    if interaction.user.id != OWNER_ID:
-        await interaction.response.send_message("You are not allowed to use this command.", ephemeral=True)
-        return
-
-    beta_role = interaction.guild.get_role(BETA_ROLE_ID)
-    if not beta_role:
-        await interaction.response.send_message("Beta role not found.", ephemeral=True)
-        return
-
-    await user.add_roles(beta_role, reason=f"Beta access granted by {interaction.user}")
-
-    await interaction.response.send_message(
-        f"{user.mention} has been granted **Beta Access**.",
-        ephemeral=True
-    )
-
-# ---------- BETA -----------
-    
-    # Log it
     log_channel = get_log_channel(interaction.guild)
     if log_channel:
         embed = discord.Embed(
@@ -938,10 +860,8 @@ async def beta(interaction: discord.Interaction, user: discord.Member):
         embed.add_field(name="Granted By", value=interaction.user.mention, inline=False)
         embed.add_field(name="Role", value=beta_role.mention, inline=False)
         await log_channel.send(embed=embed)
+
+
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
-
-
-
-
