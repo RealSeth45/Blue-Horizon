@@ -371,23 +371,6 @@ async def on_member_update(before: discord.Member, after: discord.Member):
 
         await log_channel.send(embed=embed)
 
-#----------- reply ---------------
-
-@bot.event
-async def on_message(message: discord.Message):
-    if message.author.bot:
-        return
-
-    content = message.content.lower()
-
-    trigger_words = ["seth", "leo", "max"]
-
-    if any(word in content for word in trigger_words):
-        await message.channel.send("Seth, Leo and Max are the best group ownership team in the world.")
-
-    # Keep this so slash commands still work
-    await bot.process_commands(message)
-
 # ----------------- SLASH COMMANDS -----------------
 
 guild_obj = discord.Object(id=GUILD_ID)
@@ -972,6 +955,7 @@ async def purge(
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
+
 
 
 
