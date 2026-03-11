@@ -1033,10 +1033,192 @@ async def purge(
         ephemeral=True
     )
 
+@tree.command(name="rank", description="Set a Roblox user's rank in the group.", guild=guild_obj)
+@staff_only()
+@app_commands.describe(
+    username="Roblox username",
+    rank="Target rank number (0–255)"
+)
+async def rank_command(
+    interaction: discord.Interaction,
+    username: str,
+    rank: int
+):
+    await interaction.response.defer(ephemeral=True)
 
+    if ROBLOX_API_KEY is None:
+        await interaction.followup.send("Roblox API key is not configured.", ephemeral=True)
+        return
+
+    user_id = get_roblox_user_id(username)
+    if not user_id:
+        await interaction.followup.send("Could not find that Roblox user.", ephemeral=True)
+        return
+
+    roles = get_group_roles()
+    if not roles:
+        await interaction.followup.send("Could not fetch group roles.", ephemeral=True)
+        return
+
+    target_role = next((r for r in roles if r.get("rank") == rank), None)
+    if not target_role:
+        await interaction.followup.send("That rank does not exist in the group.", ephemeral=True)
+        return
+
+    success = set_user_rank(user_id, target_role["id"])
+    if not success:
+        await interaction.followup.send("Failed to update rank via Roblox API.", ephemeral=True)
+        return
+
+    log_channel = get_log_channel(interaction.guild)
+    if log_channel:
+        embed = discord.Embed(
+            title="Roblox Rank Set",
+            color=discord.Color.blurple(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="Username", value=username, inline=False)
+        embed.add_field(name="User ID", value=str(user_id), inline=False)
+        embed.add_field(name="New Rank", value=str(rank), inline=False)
+        embed.add_field(name="Moderator", value=interaction.user.mention, inline=False)
+        await log_channel.send(embed=embed)
+
+    await interaction.followup.send(
+        f"Set **{username}** (ID: `{user_id}`) to rank `{rank}`.",
+        ephemeral=True
+    )
+
+
+@tree.command(name="promote", description="Promote a Roblox user to the next rank.", guild=guild_obj)
+@staff_only()
+@app_commands.describe(
+    username="Roblox username"
+)
+async def promote_command(
+    interaction: discord.Interaction,
+    username: str
+):
+    await interaction.response.defer(ephemeral=True)
+
+    if ROBLOX_API_KEY is None:
+        await interaction.followup.send("Roblox API key is not configured.", ephemeral=True)
+        return
+
+    user_id = get_roblox_user_id(username)
+    if not user_id:
+        await interaction.followup.send("Could not find that Roblox user.", ephemeral=True)
+        return
+
+    roles = get_group_roles()
+    if not roles:
+        await interaction.followup.send("Could not fetch group roles.", ephemeral=True)
+        return
+
+    current_role = get_user_group_role(user_id)
+    if not current_role:
+        await interaction.followup.send("User is not in the group.", ephemeral=True)
+        return
+
+    current_rank = current_role.get("rank")
+    sorted_roles = sorted(roles, key=lambda r: r.get("rank", 0))
+    higher_roles = [r for r in sorted_roles if r.get("rank", 0) > current_rank]
+
+    if not higher_roles:
+        await interaction.followup.send("User is already at the highest rank.", ephemeral=True)
+        return
+
+    next_role = higher_roles[0]
+    success = set_user_rank(user_id, next_role["id"])
+    if not success:
+        await interaction.followup.send("Failed to promote via Roblox API.", ephemeral=True)
+        return
+
+    log_channel = get_log_channel(interaction.guild)
+    if log_channel:
+        embed = discord.Embed(
+            title="Roblox Promotion",
+            color=discord.Color.green(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="Username", value=username, inline=False)
+        embed.add_field(name="User ID", value=str(user_id), inline=False)
+        embed.add_field(name="Old Rank", value=str(current_rank), inline=False)
+        embed.add_field(name="New Rank", value=str(next_role.get("rank")), inline=False)
+        embed.add_field(name="Moderator", value=interaction.user.mention, inline=False)
+        await log_channel.send(embed=embed)
+
+    await interaction.followup.send(
+        f"Promoted **{username}** (ID: `{user_id}`) to rank `{next_role.get('rank')}`.",
+        ephemeral=True
+    )
+# --------------- Rank commands
+
+@tree.command(name="demote", description="Demote a Roblox user to the previous rank.", guild=guild_obj)
+@staff_only()
+@app_commands.describe(
+    username="Roblox username"
+)
+async def demote_command(
+    interaction: discord.Interaction,
+    username: str
+):
+    await interaction.response.defer(ephemeral=True)
+
+    if ROBLOX_API_KEY is None:
+        await interaction.followup.send("Roblox API key is not configured.", ephemeral=True)
+        return
+
+    user_id = get_roblox_user_id(username)
+    if not user_id:
+        await interaction.followup.send("Could not find that Roblox user.", ephemeral=True)
+        return
+
+    roles = get_group_roles()
+    if not roles:
+        await interaction.followup.send("Could not fetch group roles.", ephemeral=True)
+        return
+
+    current_role = get_user_group_role(user_id)
+    if not current_role:
+        await interaction.followup.send("User is not in the group.", ephemeral=True)
+        return
+
+    current_rank = current_role.get("rank")
+    sorted_roles = sorted(roles, key=lambda r: r.get("rank", 0))
+    lower_roles = [r for r in sorted_roles if r.get("rank", 0) < current_rank]
+
+    if not lower_roles:
+        await interaction.followup.send("User is already at the lowest rank.", ephemeral=True)
+        return
+
+    next_role = lower_roles[-1]
+    success = set_user_rank(user_id, next_role["id"])
+    if not success:
+        await interaction.followup.send("Failed to demote via Roblox API.", ephemeral=True)
+        return
+
+    log_channel = get_log_channel(interaction.guild)
+    if log_channel:
+        embed = discord.Embed(
+            title="Roblox Demotion",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="Username", value=username, inline=False)
+        embed.add_field(name="User ID", value=str(user_id), inline=False)
+        embed.add_field(name="Old Rank", value=str(current_rank), inline=False)
+        embed.add_field(name="New Rank", value=str(next_role.get("rank")), inline=False)
+        embed.add_field(name="Moderator", value=interaction.user.mention, inline=False)
+        await log_channel.send(embed=embed)
+
+    await interaction.followup.send(
+        f"Demoted **{username}** (ID: `{user_id}`) to rank `{next_role.get('rank')}`.",
+        ephemeral=True
+    )
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
+
 
 
 
