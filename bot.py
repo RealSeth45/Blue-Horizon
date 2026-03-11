@@ -8,6 +8,8 @@ from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
+import requests
+
 # ----------------- CONFIG -----------------
 
 load_dotenv()
@@ -980,5 +982,6 @@ async def purge(
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
+
 
 
