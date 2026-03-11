@@ -1,14 +1,13 @@
 import os
 import sqlite3
 import re
+import requests
 from datetime import datetime, timedelta
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
-
-import requests
 
 # ----------------- CONFIG -----------------
 
@@ -1038,6 +1037,7 @@ async def purge(
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
+
 
 
 
