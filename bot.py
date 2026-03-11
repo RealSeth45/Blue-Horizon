@@ -260,56 +260,6 @@ ROBLOX_USERS_API = "https://users.roblox.com/v1/usernames/users"
 ROBLOX_GROUPS_API = "https://groups.roblox.com/v1"
 
 
-def roblox_headers():
-    return {
-        "x-api-key": ROBLOX_API_KEY,
-        "Content-Type": "application/json"
-    }
-
-
-def get_roblox_user_id(username: str) -> int | None:
-    payload = {
-        "usernames": [username],
-        "excludeBannedUsers": False
-    }
-    r = requests.post(ROBLOX_USERS_API, json=payload)
-    if r.status_code != 200:
-        return None
-    data = r.json()
-    if not data.get("data"):
-        return None
-    return data["data"][0]["id"]
-
-
-def get_group_roles() -> list[dict] | None:
-    url = f"{ROBLOX_GROUPS_API}/groups/{ROBLOX_GROUP_ID}/roles"
-    r = requests.get(url)
-    if r.status_code != 200:
-        return None
-    data = r.json()
-    return data.get("roles", [])
-
-
-def get_user_group_role(user_id: int) -> dict | None:
-    url = f"{ROBLOX_GROUPS_API}/users/{user_id}/groups/roles"
-    r = requests.get(url)
-    if r.status_code != 200:
-        return None
-    data = r.json()
-    for entry in data:
-        group = entry.get("group")
-        if group and group.get("id") == ROBLOX_GROUP_ID:
-            return entry.get("role")
-    return None
-
-
-def set_user_rank(user_id: int, role_id: int) -> bool:
-    url = f"{ROBLOX_GROUPS_API}/groups/{ROBLOX_GROUP_ID}/users/{user_id}"
-    payload = {"roleId": role_id}
-    r = requests.patch(url, headers=roblox_headers(), json=payload)
-    return r.status_code == 200
-
-
 # ----------------- LOGGING EVENTS -----------------
 
 TARGET_USER_ID = OWNER_ID  # forward deleted log messages to you
@@ -1173,6 +1123,7 @@ async def demote_command(interaction: discord.Interaction, username: str):
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
+
 
 
 
