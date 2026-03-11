@@ -16,7 +16,7 @@ TOKEN = os.getenv("TOKEN")
 ROBLOX_API_KEY = os.getenv("ROBLOX_API_KEY")
 ROBLOX_GROUP_ID = 299952594
 
-GUILD_ID = 1472748211038064832          # your guild ID
+GUILD_ID = 1472748211038064832          # your guild IDF
 STAFF_ROLE_ID = 1472955865144365148     # staff role ID
 LOG_CHANNEL_NAME = "bluehorizon-logs"   # log channel name
 DB_PATH = "moderation.db"
@@ -142,11 +142,12 @@ async def get_user_group_role(user_id: int):
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as r:
             if r.status != 200:
+                print("DEBUG STATUS:", r.status)
                 return None
 
             data = await r.json()
+            print("DEBUG GROUP ROLE RESPONSE:", data)  # <--- ADD THIS
 
-            # Roblox sometimes returns ["Unauthorized"] or ["Rate limited"]
             if not isinstance(data, list):
                 return None
 
@@ -1123,6 +1124,7 @@ async def demote_command(interaction: discord.Interaction, username: str):
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
+
 
 
 
