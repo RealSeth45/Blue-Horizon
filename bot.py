@@ -112,6 +112,7 @@ ROBLOX_API_KEY = os.getenv("Pizza")  # updated key name
 
 
 async def get_roblox_user_id(username: str):
+    print("DEBUG: async get_roblox_user_id is running")
     url = "https://users.roblox.com/v1/usernames/users"
     payload = {"usernames": [username], "excludeBannedUsers": False}
 
@@ -1124,6 +1125,7 @@ async def demote_command(interaction: discord.Interaction, username: str):
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
+
 
 
 
