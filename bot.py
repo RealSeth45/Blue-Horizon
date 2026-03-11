@@ -14,6 +14,8 @@ import requests
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
+ROBLOX_API_KEY = os.getenv("ROBLOX_API_KEY")
+ROBLOX_GROUP_ID = 299952594
 
 GUILD_ID = 1472748211038064832          # your guild ID
 STAFF_ROLE_ID = 1472955865144365148     # staff role ID
@@ -982,6 +984,7 @@ async def purge(
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
+
 
 
 
