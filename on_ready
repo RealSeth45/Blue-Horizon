@@ -18,20 +18,29 @@ TOKEN = os.getenv("TOKEN")
 ROBLOX_API_KEY = os.getenv("ROBLOX_API_KEY")
 ROBLOX_GROUP_ID = 299952594
 
-GUILD_ID = 1472748211038064832          # your guild IDF
-STAFF_ROLE_ID = 1472955865144365148     # staff role ID
-LOG_CHANNEL_NAME = "bluehorizon-logs"   # log channel name
+GUILD_ID = 1472748211038064832
+STAFF_ROLE_ID = 1472955865144365148
+LOG_CHANNEL_NAME = "bluehorizon-logs"
 DB_PATH = "moderation.db"
 
-OWNER_ID = 1190692291535446156          # you
-BETA_ROLE_ID = 1473745556198260890      # real beta role ID
+OWNER_ID = 1190692291535446156
+BETA_ROLE_ID = 1473745556198260890
 
 COMMUNITY_ID = 299952594
 VOICE_CHANNEL_ID = 1483878606974226432
 
+# --- CREATE BOT FIRST ---
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+intents.guilds = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+tree = bot.tree
+
+# --- NOW THE TASKS ---
 async def fetch_community_member_count():
     url = f"https://groups.roblox.com/v1/communities/{COMMUNITY_ID}"
-
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as r:
             if r.status != 200:
@@ -41,6 +50,7 @@ async def fetch_community_member_count():
 
 async def update_member_count_task():
     await bot.wait_until_ready()
+    print("Member count task started.")
 
     while not bot.is_closed():
         count = await fetch_community_member_count()
@@ -54,15 +64,7 @@ async def update_member_count_task():
                 except Exception as e:
                     print(f"Failed to update channel name: {e}")
 
-        await asyncio.sleep(300)  # update every 5 minutes
-    
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
-intents.guilds = True
-
-bot = commands.Bot(command_prefix="!", intents=intents)
-tree = bot.tree
+        await asyncio.sleep(300)
 
 @bot.event
 async def on_ready():
