@@ -2,6 +2,8 @@ import os
 import sqlite3
 import re
 import requests
+import aiohttp
+import asyncio
 from datetime import datetime, timedelta
 
 import discord
@@ -24,6 +26,36 @@ DB_PATH = "moderation.db"
 OWNER_ID = 1190692291535446156          # you
 BETA_ROLE_ID = 1473745556198260890      # real beta role ID
 
+COMMUNITY_ID = 299952594
+VOICE_CHANNEL_ID = 1483878606974226432
+
+async def fetch_community_member_count():
+    url = f"https://groups.roblox.com/v1/communities/{COMMUNITY_ID}"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as r:
+            if r.status != 200:
+                return None
+            data = await r.json()
+            return data.get("memberCount")
+
+async def update_member_count_task():
+    await bot.wait_until_ready()
+
+    while not bot.is_closed():
+        count = await fetch_community_member_count()
+
+        if count is not None:
+            channel = bot.get_channel(VOICE_CHANNEL_ID)
+            if channel:
+                try:
+                    await channel.edit(name=f"Members: {count}")
+                    print(f"Updated member count to {count}")
+                except Exception as e:
+                    print(f"Failed to update channel name: {e}")
+
+        await asyncio.sleep(300)  # update every 5 minutes
+    
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -32,6 +64,10 @@ intents.guilds = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
+@bot.event
+async def on_ready():
+    print("Auto member count updater started.")
+    bot.loop.create_task(update_member_count_task())
 # ----------------- DATABASE -----------------
 
 def init_db():
