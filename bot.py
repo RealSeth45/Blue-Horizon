@@ -716,5 +716,3 @@ if __name__ == "__main__":
     if not TOKEN:
         raise RuntimeError("TOKEN environment variable is not set.")
     bot.run(TOKEN)
-
-
