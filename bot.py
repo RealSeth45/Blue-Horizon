@@ -1122,6 +1122,41 @@ async def demote_command(interaction: discord.Interaction, username: str):
         f"Demoted **{username}** to rank `{next_role.get('rank')}`.",
         ephemeral=True
     )
+
+@tree.command(name="nickname", description="Change a user's nickname.", guild=guild_obj)
+@staff_only()  # if you want only staff to use it
+async def nickname_command(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    new_nickname: str
+):
+    await interaction.response.defer(ephemeral=True)
+
+    # Permission checks
+    if not interaction.user.guild_permissions.manage_nicknames:
+        return await interaction.followup.send("You don't have permission to change nicknames.", ephemeral=True)
+
+    if not interaction.guild.me.guild_permissions.manage_nicknames:
+        return await interaction.followup.send("I don't have permission to change nicknames.", ephemeral=True)
+
+    # Check role hierarchy
+    if member.top_role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
+        return await interaction.followup.send("You can't change the nickname of someone with a higher or equal role.", ephemeral=True)
+
+    if member.top_role >= interaction.guild.me.top_role:
+        return await interaction.followup.send("I can't change the nickname of someone above me.", ephemeral=True)
+
+    # Try to change nickname
+    try:
+        old_nick = member.nick or member.name
+        await member.edit(nick=new_nickname)
+        await interaction.followup.send(
+            f"Nickname changed:\n**{old_nick} ➜ {new_nickname}**",
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.followup.send(f"Failed to change nickname: `{e}`", ephemeral=True)
+        
 # ----------------- RUN -----------------
 
 bot.run(TOKEN)
