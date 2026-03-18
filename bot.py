@@ -1,718 +1,867 @@
 import os
 import sqlite3
-import asyncio
-from datetime import datetime, timezone, timedelta
+import re
+from datetime import datetime, timedelta
 
-import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
-# ================== CONFIG ==================
+# ----------------- CONFIG -----------------
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
-# IDs
-GUILD_ID = 1472748211038064832
-STAFF_ROLE_ID = 1472955865144365148
-LOG_CHANNEL_ID = 1473410235040399392
-
-COMMUNITY_ID = 299952594
-VOICE_CHANNEL_ID = 1483878606974226432
-
+GUILD_ID = 1472748211038064832          # your guild ID
+STAFF_ROLE_ID = 1472955865144365148     # staff role ID
+LOG_CHANNEL_NAME = "bluehorizon-logs"   # log channel name
 DB_PATH = "moderation.db"
 
-# ================== BOT SETUP ==================
+OWNER_ID = 1190692291535446156          # you
+BETA_ROLE_ID = 123456789012345678       # TODO: replace with your real beta role ID
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.guilds = True
-intents.presences = False
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-
-# ================== DATABASE ==================
+# ----------------- DATABASE -----------------
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute(
-        """
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS cases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            moderator_id INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            reason TEXT,
+            timestamp TEXT NOT NULL
+        )
+    """)
+
+    c.execute("""
         CREATE TABLE IF NOT EXISTS warnings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             moderator_id INTEGER NOT NULL,
-            reason TEXT NOT NULL,
+            reason TEXT,
             timestamp TEXT NOT NULL
         )
-        """
-    )
+    """)
+
     conn.commit()
     conn.close()
 
 
-def add_warning(user_id: int, moderator_id: int, reason: str):
+def add_case(user_id: int, moderator_id: int, action: str, reason: str | None):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    ts = datetime.utcnow().isoformat()
+    c.execute(
+        "INSERT INTO cases (user_id, moderator_id, action, reason, timestamp) VALUES (?, ?, ?, ?, ?)",
+        (user_id, moderator_id, action, reason, ts),
+    )
+    case_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return case_id
+
+
+def add_warning(user_id: int, moderator_id: int, reason: str | None):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    ts = datetime.utcnow().isoformat()
     c.execute(
         "INSERT INTO warnings (user_id, moderator_id, reason, timestamp) VALUES (?, ?, ?, ?)",
-        (user_id, moderator_id, reason, datetime.now(timezone.utc).isoformat()),
+        (user_id, moderator_id, reason, ts),
     )
+    warning_id = c.lastrowid
     conn.commit()
     conn.close()
+    return warning_id
 
 
-def get_warnings(user_id: int):
+def get_history(user_id: int, limit: int = 10):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
-        "SELECT id, moderator_id, reason, timestamp FROM warnings WHERE user_id = ? ORDER BY id ASC",
-        (user_id,),
+        "SELECT id, action, reason, moderator_id, timestamp FROM cases WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+        (user_id, limit),
     )
     rows = c.fetchall()
     conn.close()
     return rows
 
 
-def remove_warning(warn_id: int):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("DELETE FROM warnings WHERE id = ?", (warn_id,))
-    changes = c.rowcount
-    conn.commit()
-    conn.close()
-    return changes > 0
+# ----------------- HELPERS -----------------
+
+def get_log_channel(guild: discord.Guild):
+    return discord.utils.get(guild.channels, name=LOG_CHANNEL_NAME)
 
 
-# ================== UTILITIES ==================
+def parse_duration(duration: str) -> timedelta | None:
+    match = re.fullmatch(r"(\d+)([smhdw])", duration.lower().strip())
+    if not match:
+        return None
 
-def is_staff(interaction: discord.Interaction) -> bool:
-    if interaction.user.guild_permissions.administrator:
-        return True
-    role = interaction.guild.get_role(STAFF_ROLE_ID)
-    if role is None:
-        return False
-    return role in getattr(interaction.user, "roles", [])
+    value = int(match.group(1))
+    unit = match.group(2)
 
-
-def staff_only():
-    async def predicate(interaction: discord.Interaction):
-        if not is_staff(interaction):
-            await interaction.response.send_message(
-                "You do not have permission to use this command.", ephemeral=True
-            )
-            return False
-        return True
-
-    return app_commands.check(predicate)
-
-
-async def get_log_channel(guild: discord.Guild) -> discord.TextChannel | None:
-    channel = guild.get_channel(LOG_CHANNEL_ID)
-    if isinstance(channel, discord.TextChannel):
-        return channel
+    if unit == "s":
+        return timedelta(seconds=value)
+    if unit == "m":
+        return timedelta(minutes=value)
+    if unit == "h":
+        return timedelta(hours=value)
+    if unit == "d":
+        return timedelta(days=value)
+    if unit == "w":
+        return timedelta(weeks=value)
     return None
 
 
-def format_dt(dt_str: str) -> str:
+async def send_dm(user: discord.User, embed: discord.Embed):
     try:
-        dt = datetime.fromisoformat(dt_str)
-        return f"<t:{int(dt.timestamp())}:R>"
-    except Exception:
-        return dt_str
+        await user.send(embed=embed)
+    except:
+        pass
 
 
-# ================== ROBLOX MEMBER COUNTER ==================
-
-async def fetch_community_member_count():
-    url = f"https://groups.roblox.com/v1/communities/{COMMUNITY_ID}"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as r:
-            if r.status != 200:
-                print(f"[COUNTER] Failed to fetch community data: HTTP {r.status}")
-                return None
-            data = await r.json()
-            return data.get("memberCount")
+def staff_only():
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if interaction.guild is None:
+            return False
+        member = interaction.user
+        if not isinstance(member, discord.Member):
+            return False
+        return any(role.id == STAFF_ROLE_ID for role in member.roles)
+    return app_commands.check(predicate)
 
 
-async def update_member_count_task():
-    await bot.wait_until_ready()
-    print("[COUNTER] Member count task started.")
+# ----------------- EVENTS -----------------
 
-    while not bot.is_closed():
-        try:
-            count = await fetch_community_member_count()
-            if count is not None:
-                guild = bot.get_guild(GUILD_ID)
-                if guild:
-                    channel = guild.get_channel(VOICE_CHANNEL_ID)
-                    if isinstance(channel, discord.VoiceChannel):
-                        try:
-                            await channel.edit(name=f"Members: {count}")
-                            print(f"[COUNTER] Updated member count to {count}")
-                        except Exception as e:
-                            print(f"[COUNTER] Failed to update channel name: {e}")
-                    else:
-                        print("[COUNTER] Voice channel not found or wrong type.")
-                else:
-                    print("[COUNTER] Guild not found.")
-            else:
-                print("[COUNTER] Could not fetch member count.")
-        except Exception as e:
-            print(f"[COUNTER] Error in member count loop: {e}")
-
-        await asyncio.sleep(300)  # 5 minutes
+@bot.event
+async def on_ready():
+    init_db()
+    guild = discord.Object(id=GUILD_ID)
+    await tree.sync(guild=guild)
+    print(f"Blue Horizon is online as {bot.user} | Slash commands synced.")
 
 
-# ================== LOGGING HELPERS ==================
-
-async def send_log_embed(guild: discord.Guild, embed: discord.Embed):
-    channel = await get_log_channel(guild)
-    if channel is None:
+@bot.event
+async def on_message(message: discord.Message):
+    if isinstance(message.channel, discord.DMChannel):
         return
-    try:
-        await channel.send(embed=embed)
-    except Exception as e:
-        print(f"[LOG] Failed to send log embed: {e}")
+    await bot.process_commands(message)
 
 
-# ================== EVENTS: LOGGING ==================
+# ----------------- LOGGING EVENTS -----------------
+
+TARGET_USER_ID = OWNER_ID  # forward deleted log messages to you
+
 
 @bot.event
 async def on_message_delete(message: discord.Message):
-    if message.guild is None or message.author.bot:
+    if not message.guild:
+        return
+
+    log_channel = get_log_channel(message.guild)
+    if not log_channel:
+        return
+
+    # If the deleted message was a LOG MESSAGE posted by the bot → forward it
+    if message.channel.id == log_channel.id and message.author.id == bot.user.id:
+        try:
+            target = await message.guild.fetch_member(TARGET_USER_ID)
+
+            if message.embeds:
+                for embed in message.embeds:
+                    forwarded = embed.copy()
+                    forwarded.title = "⚠️ A Log Message Was Deleted"
+                    await target.send(embed=forwarded)
+
+            if message.content:
+                await target.send(
+                    f"⚠️ A log message was deleted in {log_channel.mention}:\n\n{message.content}"
+                )
+
+        except Exception as e:
+            print(f"Could not forward deleted log: {e}")
+
+        return
+
+    if message.author.bot:
         return
 
     embed = discord.Embed(
         title="Message Deleted",
+        description=f"Message by {message.author.mention} was deleted",
         color=discord.Color.red(),
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.utcnow()
     )
-    embed.add_field(name="Author", value=f"{message.author} ({message.author.id})", inline=False)
-    embed.add_field(name="Channel", value=f"{message.channel.mention}", inline=False)
-    content = message.content or "*No content*"
-    if len(content) > 1024:
-        content = content[:1021] + "..."
-    embed.add_field(name="Content", value=content, inline=False)
-    await send_log_embed(message.guild, embed)
+
+    embed.add_field(name="Channel", value=message.channel.mention, inline=False)
+    embed.add_field(name="Content", value=message.content or "No text", inline=False)
+
+    if message.attachments:
+        urls = "\n".join(a.url for a in message.attachments)
+        embed.add_field(name="Attachments", value=urls, inline=False)
+        embed.set_image(url=message.attachments[0].url)
+
+    if message.author.avatar:
+        embed.set_thumbnail(url=message.author.avatar.url)
+
+    await log_channel.send(embed=embed)
 
 
 @bot.event
 async def on_message_edit(before: discord.Message, after: discord.Message):
-    if before.guild is None or before.author.bot:
+    if before.author.bot or not before.guild:
         return
     if before.content == after.content:
         return
 
-    embed = discord.Embed(
-        title="Message Edited",
-        color=discord.Color.orange(),
-        timestamp=datetime.now(timezone.utc),
-    )
-    embed.add_field(name="Author", value=f"{before.author} ({before.author.id})", inline=False)
-    embed.add_field(name="Channel", value=before.channel.mention, inline=False)
-
-    before_content = before.content or "*No content*"
-    after_content = after.content or "*No content*"
-    if len(before_content) > 1024:
-        before_content = before_content[:1021] + "..."
-    if len(after_content) > 1024:
-        after_content = after_content[:1021] + "..."
-
-    embed.add_field(name="Before", value=before_content, inline=False)
-    embed.add_field(name="After", value=after_content, inline=False)
-    await send_log_embed(before.guild, embed)
-
-
-@bot.event
-async def on_member_update(before: discord.Member, after: discord.Member):
-    if before.guild is None:
+    log_channel = get_log_channel(before.guild)
+    if not log_channel:
         return
 
-    # Nickname change
-    if before.nick != after.nick:
-        embed = discord.Embed(
-            title="Nickname Changed",
-            color=discord.Color.blurple(),
-            timestamp=datetime.now(timezone.utc),
-        )
-        embed.add_field(name="User", value=f"{before} ({before.id})", inline=False)
-        embed.add_field(name="Before", value=before.nick or before.name, inline=True)
-        embed.add_field(name="After", value=after.nick or after.name, inline=True)
-        await send_log_embed(before.guild, embed)
+    embed = discord.Embed(
+        title="Message Edited",
+        description=f"{before.author.mention} edited a message",
+        color=discord.Color.orange(),
+        timestamp=datetime.utcnow()
+    )
 
-    # Roles change
-    before_roles = set(before.roles)
-    after_roles = set(after.roles)
+    embed.add_field(name="Channel", value=before.channel.mention, inline=False)
+    embed.add_field(name="Before", value=before.content or "No text", inline=False)
+    embed.add_field(name="After", value=after.content or "No text", inline=False)
 
-    added = after_roles - before_roles
-    removed = before_roles - after_roles
+    if before.attachments:
+        urls = "\n".join(a.url for a in before.attachments)
+        embed.add_field(name="Old Attachments", value=urls, inline=False)
 
-    if added:
-        for role in added:
-            if role.is_default():
-                continue
-            embed = discord.Embed(
-                title="Role Added",
-                color=discord.Color.green(),
-                timestamp=datetime.now(timezone.utc),
-            )
-            embed.add_field(name="User", value=f"{after} ({after.id})", inline=False)
-            embed.add_field(name="Role", value=f"{role.mention} ({role.id})", inline=False)
-            await send_log_embed(after.guild, embed)
+    if after.attachments:
+        urls = "\n".join(a.url for a in after.attachments)
+        embed.add_field(name="New Attachments", value=urls, inline=False)
+        embed.set_image(url=after.attachments[0].url)
 
-    if removed:
-        for role in removed:
-            if role.is_default():
-                continue
-            embed = discord.Embed(
-                title="Role Removed",
-                color=discord.Color.red(),
-                timestamp=datetime.now(timezone.utc),
-            )
-            embed.add_field(name="User", value=f"{after} ({after.id})", inline=False)
-            embed.add_field(name="Role", value=f"{role.name} ({role.id})", inline=False)
-            await send_log_embed(after.guild, embed)
+    if before.author.avatar:
+        embed.set_thumbnail(url=before.author.avatar.url)
+
+    await log_channel.send(embed=embed)
 
 
 @bot.event
 async def on_member_join(member: discord.Member):
-    if member.guild is None:
+    log_channel = get_log_channel(member.guild)
+    if not log_channel:
         return
+
     embed = discord.Embed(
         title="Member Joined",
+        description=f"{member.mention} joined the server",
         color=discord.Color.green(),
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.utcnow()
     )
-    embed.add_field(name="User", value=f"{member} ({member.id})", inline=False)
-    await send_log_embed(member.guild, embed)
+
+    if member.avatar:
+        embed.set_thumbnail(url=member.avatar.url)
+
+    await log_channel.send(embed=embed)
 
 
 @bot.event
 async def on_member_remove(member: discord.Member):
-    if member.guild is None:
+    log_channel = get_log_channel(member.guild)
+    if not log_channel:
         return
+
     embed = discord.Embed(
         title="Member Left",
-        color=discord.Color.red(),
-        timestamp=datetime.now(timezone.utc),
+        description=f"{member} left the server",
+        color=discord.Color.dark_red(),
+        timestamp=datetime.utcnow()
     )
-    embed.add_field(name="User", value=f"{member} ({member.id})", inline=False)
-    await send_log_embed(member.guild, embed)
 
+    if member.avatar:
+        embed.set_thumbnail(url=member.avatar.url)
 
-@bot.event
-async def on_guild_role_create(role: discord.Role):
-    embed = discord.Embed(
-        title="Role Created",
-        color=discord.Color.green(),
-        timestamp=datetime.now(timezone.utc),
-    )
-    embed.add_field(name="Role", value=f"{role.name} ({role.id})", inline=False)
-    await send_log_embed(role.guild, embed)
-
-
-@bot.event
-async def on_guild_role_delete(role: discord.Role):
-    embed = discord.Embed(
-        title="Role Deleted",
-        color=discord.Color.red(),
-        timestamp=datetime.now(timezone.utc),
-    )
-    embed.add_field(name="Role", value=f"{role.name} ({role.id})", inline=False)
-    await send_log_embed(role.guild, embed)
+    await log_channel.send(embed=embed)
 
 
 @bot.event
 async def on_guild_channel_create(channel: discord.abc.GuildChannel):
+    log_channel = get_log_channel(channel.guild)
+    if not log_channel:
+        return
+
     embed = discord.Embed(
         title="Channel Created",
+        description=f"{channel.mention} was created",
         color=discord.Color.green(),
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.utcnow()
     )
-    embed.add_field(name="Channel", value=f"{channel.name} ({channel.id})", inline=False)
-    await send_log_embed(channel.guild, embed)
+
+    await log_channel.send(embed=embed)
 
 
 @bot.event
 async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
-    embed = discord.Embed(
-        title="Channel Deleted",
-        color=discord.Color.red(),
-        timestamp=datetime.now(timezone.utc),
-    )
-    embed.add_field(name="Channel", value=f"{channel.name} ({channel.id})", inline=False)
-    await send_log_embed(channel.guild, embed)
-
-
-@bot.event
-async def on_guild_channel_update(before: discord.abc.GuildChannel, after: discord.abc.GuildChannel):
-    if before.name != after.name:
-        embed = discord.Embed(
-            title="Channel Renamed",
-            color=discord.Color.blurple(),
-            timestamp=datetime.now(timezone.utc),
-        )
-        embed.add_field(name="Before", value=f"{before.name}", inline=True)
-        embed.add_field(name="After", value=f"{after.name}", inline=True)
-        embed.add_field(name="Channel ID", value=str(after.id), inline=False)
-        await send_log_embed(after.guild, embed)
-
-
-# ================== SLASH COMMANDS ==================
-
-# ---- Public: userinfo, serverinfo ----
-
-@tree.command(name="userinfo", description="Show information about a user.")
-@app_commands.describe(user="The user to get info about")
-async def userinfo(interaction: discord.Interaction, user: discord.User | None = None):
-    user = user or interaction.user
-    member = interaction.guild.get_member(user.id) if interaction.guild else None
-
-    embed = discord.Embed(
-        title=f"User Info - {user}",
-        color=discord.Color.blurple(),
-        timestamp=datetime.now(timezone.utc),
-    )
-    embed.set_thumbnail(url=user.display_avatar.url)
-    embed.add_field(name="ID", value=str(user.id), inline=False)
-    embed.add_field(name="Created", value=f"<t:{int(user.created_at.timestamp())}:R>", inline=False)
-
-    if member:
-        embed.add_field(name="Joined", value=f"<t:{int(member.joined_at.timestamp())}:R>", inline=False)
-        roles = [r.mention for r in member.roles if not r.is_default()]
-        embed.add_field(name="Roles", value=", ".join(roles) if roles else "None", inline=False)
-
-    await interaction.response.send_message(embed=embed)
-
-
-@tree.command(name="serverinfo", description="Show information about the server.")
-async def serverinfo(interaction: discord.Interaction):
-    guild = interaction.guild
-    if guild is None:
-        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+    log_channel = get_log_channel(channel.guild)
+    if not log_channel:
         return
 
     embed = discord.Embed(
-        title=f"Server Info - {guild.name}",
-        color=discord.Color.blurple(),
-        timestamp=datetime.now(timezone.utc),
-    )
-    if guild.icon:
-        embed.set_thumbnail(url=guild.icon.url)
-
-    embed.add_field(name="ID", value=str(guild.id), inline=False)
-    embed.add_field(name="Owner", value=f"{guild.owner} ({guild.owner_id})", inline=False)
-    embed.add_field(name="Members", value=str(guild.member_count), inline=False)
-    embed.add_field(name="Created", value=f"<t:{int(guild.created_at.timestamp())}:R>", inline=False)
-    embed.add_field(name="Channels", value=str(len(guild.channels)), inline=False)
-    embed.add_field(name="Roles", value=str(len(guild.roles)), inline=False)
-
-    await interaction.response.send_message(embed=embed)
-
-
-# ---- Moderation: staff-only ----
-
-@tree.command(name="warn", description="Warn a user.")
-@staff_only()
-@app_commands.describe(user="User to warn", reason="Reason for the warning")
-async def warn(interaction: discord.Interaction, user: discord.Member, reason: str):
-    add_warning(user.id, interaction.user.id, reason)
-    embed = discord.Embed(
-        title="User Warned",
-        color=discord.Color.orange(),
-        timestamp=datetime.now(timezone.utc),
-    )
-    embed.add_field(name="User", value=f"{user} ({user.id})", inline=False)
-    embed.add_field(name="Moderator", value=f"{interaction.user} ({interaction.user.id})", inline=False)
-    embed.add_field(name="Reason", value=reason, inline=False)
-
-    await interaction.response.send_message(embed=embed)
-    if interaction.guild:
-        await send_log_embed(interaction.guild, embed)
-
-
-@tree.command(name="warnings", description="View a user's warnings.")
-@staff_only()
-@app_commands.describe(user="User to view warnings for")
-async def warnings(interaction: discord.Interaction, user: discord.Member):
-    warns = get_warnings(user.id)
-    embed = discord.Embed(
-        title=f"Warnings for {user}",
-        color=discord.Color.orange(),
-        timestamp=datetime.now(timezone.utc),
+        title="Channel Deleted",
+        description=f"{channel.name} was deleted",
+        color=discord.Color.dark_red(),
+        timestamp=datetime.utcnow()
     )
 
-    if not warns:
-        embed.description = "No warnings found."
-    else:
-        for wid, mod_id, reason, ts in warns:
-            embed.add_field(
-                name=f"ID: {wid} • Moderator: {mod_id}",
-                value=f"Reason: {reason}\nTime: {format_dt(ts)}",
-                inline=False,
-            )
-
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await log_channel.send(embed=embed)
 
 
-@tree.command(name="warnremove", description="Remove a warning by ID.")
-@staff_only()
-@app_commands.describe(warning_id="The ID of the warning to remove")
-async def warnremove(interaction: discord.Interaction, warning_id: int):
-    success = remove_warning(warning_id)
-    if success:
-        msg = f"Warning with ID `{warning_id}` has been removed."
-        color = discord.Color.green()
-    else:
-        msg = f"No warning found with ID `{warning_id}`."
-        color = discord.Color.red()
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    if before.roles == after.roles:
+        return
 
-    embed = discord.Embed(
-        title="Warn Remove",
-        description=msg,
-        color=color,
-        timestamp=datetime.now(timezone.utc),
-    )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    log_channel = get_log_channel(after.guild)
+    if not log_channel:
+        return
 
+    before_set = set(before.roles)
+    after_set = set(after.roles)
 
-@tree.command(name="ban", description="Ban a user from the server.")
-@staff_only()
-@app_commands.describe(user="User to ban", reason="Reason for the ban")
-async def ban(interaction: discord.Interaction, user: discord.Member, reason: str):
-    await interaction.response.defer(ephemeral=True)
-    try:
-        await user.ban(reason=f"{interaction.user} - {reason}")
+    added = after_set - before_set
+    removed = before_set - after_set
+
+    for role in added:
+        if role.is_default():
+            continue
+
         embed = discord.Embed(
-            title="User Banned",
+            title="Role Assigned",
+            color=discord.Color.green(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="User", value=after.mention, inline=False)
+        embed.add_field(name="Role", value=role.mention, inline=False)
+
+        await log_channel.send(embed=embed)
+
+    for role in removed:
+        if role.is_default():
+            continue
+
+        embed = discord.Embed(
+            title="Role Removed",
             color=discord.Color.red(),
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.utcnow()
         )
-        embed.add_field(name="User", value=f"{user} ({user.id})", inline=False)
-        embed.add_field(name="Moderator", value=f"{interaction.user} ({interaction.user.id})", inline=False)
-        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.add_field(name="User", value=after.mention, inline=False)
+        embed.add_field(name="Role", value=role.mention, inline=False)
 
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        if interaction.guild:
-            await send_log_embed(interaction.guild, embed)
-    except Exception as e:
-        await interaction.followup.send(f"Failed to ban user: `{e}`", ephemeral=True)
+        await log_channel.send(embed=embed)
 
 
-@tree.command(name="kick", description="Kick a user from the server.")
-@staff_only()
-@app_commands.describe(user="User to kick", reason="Reason for the kick")
-async def kick(interaction: discord.Interaction, user: discord.Member, reason: str):
-    await interaction.response.defer(ephemeral=True)
-    try:
-        await user.kick(reason=f"{interaction.user} - {reason}")
-        embed = discord.Embed(
-            title="User Kicked",
-            color=discord.Color.orange(),
-            timestamp=datetime.now(timezone.utc),
-        )
-        embed.add_field(name="User", value=f"{user} ({user.id})", inline=False)
-        embed.add_field(name="Moderator", value=f"{interaction.user} ({interaction.user.id})", inline=False)
-        embed.add_field(name="Reason", value=reason, inline=False)
+# ----------------- SLASH COMMANDS -----------------
 
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        if interaction.guild:
-            await send_log_embed(interaction.guild, embed)
-    except Exception as e:
-        await interaction.followup.send(f"Failed to kick user: `{e}`", ephemeral=True)
+guild_obj = discord.Object(id=GUILD_ID)
 
 
-@tree.command(name="timeout", description="Timeout a user for a duration.")
+@tree.command(name="ping", description="Check if the bot is alive.", guild=guild_obj)
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message("Pong!", ephemeral=True)
+
+
+# ----------------- MODERATION: TIMEOUT -----------------
+
+@tree.command(name="timeout", description="Timeout a member for a duration.", guild=guild_obj)
 @staff_only()
 @app_commands.describe(
     user="User to timeout",
-    duration_minutes="Duration in minutes",
-    reason="Reason for the timeout",
+    duration="Duration (e.g. 10m, 2h, 1d, 1w, 30s)",
+    reason="Reason for the timeout"
 )
 async def timeout(
     interaction: discord.Interaction,
     user: discord.Member,
-    duration_minutes: app_commands.Range[int, 1, 40320],  # up to 28 days
-    reason: str,
+    duration: str,
+    reason: str = "No reason provided"
 ):
-    await interaction.response.defer(ephemeral=True)
-    try:
-        until = datetime.now(timezone.utc) + timedelta(minutes=duration_minutes)
-        await user.timeout(until, reason=f"{interaction.user} - {reason}")
-        embed = discord.Embed(
-            title="User Timed Out",
-            color=discord.Color.orange(),
-            timestamp=datetime.now(timezone.utc),
+    delta = parse_duration(duration)
+    if not delta:
+        await interaction.response.send_message(
+            "Invalid duration. Use one unit: `Xs`, `Xm`, `Xh`, `Xd`, `Xw`.",
+            ephemeral=True
         )
-        embed.add_field(name="User", value=f"{user} ({user.id})", inline=False)
-        embed.add_field(name="Moderator", value=f"{interaction.user} ({interaction.user.id})", inline=False)
-        embed.add_field(name="Duration", value=f"{duration_minutes} minutes", inline=False)
-        embed.add_field(name="Reason", value=reason, inline=False)
-
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        if interaction.guild:
-            await send_log_embed(interaction.guild, embed)
-    except Exception as e:
-        await interaction.followup.send(f"Failed to timeout user: `{e}`", ephemeral=True)
-
-
-@tree.command(name="purge", description="Purge messages in this channel (up to 5000).")
-@staff_only()
-@app_commands.describe(amount="Number of messages to delete (max 5000)")
-async def purge(interaction: discord.Interaction, amount: app_commands.Range[int, 1, 5000]):
-    channel = interaction.channel
-    if not isinstance(channel, discord.TextChannel):
-        await interaction.response.send_message("This command can only be used in text channels.", ephemeral=True)
         return
 
-    await interaction.response.defer(ephemeral=True)
     try:
-        deleted = await channel.purge(limit=amount + 1)  # +1 to include the command message
-        count = len(deleted) - 1 if len(deleted) > 0 else 0
+        await user.timeout(delta, reason=reason)
+    except discord.Forbidden:
+        await interaction.response.send_message("I don't have permission to timeout that user.", ephemeral=True)
+        return
 
+    case_id = add_case(user.id, interaction.user.id, "timeout", f"{reason} (duration: {duration})")
+
+    dm_embed = discord.Embed(
+        title="You have been timed out",
+        color=discord.Color.dark_grey(),
+        timestamp=datetime.utcnow()
+    )
+    dm_embed.add_field(name="Duration", value=duration, inline=False)
+    dm_embed.add_field(name="Reason", value=reason, inline=False)
+    dm_embed.add_field(name="Case ID", value=str(case_id), inline=False)
+    await send_dm(user, dm_embed)
+
+    log_channel = get_log_channel(interaction.guild)
+    if log_channel:
         embed = discord.Embed(
-            title="Messages Purged",
-            color=discord.Color.red(),
-            timestamp=datetime.now(timezone.utc),
+            title=f"User Timed Out | Case #{case_id}",
+            color=discord.Color.dark_grey(),
+            timestamp=datetime.utcnow()
         )
-        embed.add_field(name="Channel", value=channel.mention, inline=False)
-        embed.add_field(name="Moderator", value=f"{interaction.user} ({interaction.user.id})", inline=False)
-        embed.add_field(name="Amount", value=str(count), inline=False)
+        embed.add_field(name="User", value=f"{user} ({user.mention})", inline=False)
+        embed.add_field(name="Moderator", value=interaction.user.mention, inline=False)
+        embed.add_field(name="Duration", value=duration, inline=False)
+        embed.add_field(name="Reason", value=reason, inline=False)
+        await log_channel.send(embed=embed)
 
-        await interaction.followup.send(f"Deleted {count} messages.", ephemeral=True)
-        if interaction.guild:
-            await send_log_embed(interaction.guild, embed)
-    except Exception as e:
-        await interaction.followup.send(f"Failed to purge messages: `{e}`", ephemeral=True)
+    await interaction.response.send_message(
+        f"{user.mention} has been timed out for `{duration}`. Case `#{case_id}`.",
+        ephemeral=True
+    )
 
 
-# ---- Role assign / remove ----
+# ----------------- MODERATION: UNTIMEOUT -----------------
 
-@tree.command(name="roleadd", description="Add a role to a user.")
+@tree.command(name="untimeout", description="Remove timeout from a member.", guild=guild_obj)
 @staff_only()
-@app_commands.describe(user="User to give the role to", role="Role to add")
-async def roleadd(interaction: discord.Interaction, user: discord.Member, role: discord.Role):
-    await interaction.response.defer(ephemeral=True)
+@app_commands.describe(
+    user="User to remove timeout from",
+    reason="Reason for removing timeout"
+)
+async def untimeout(
+    interaction: discord.Interaction,
+    user: discord.Member,
+    reason: str = "No reason provided"
+):
     try:
-        await user.add_roles(role, reason=f"{interaction.user} - roleadd command")
+        await user.timeout(None, reason=reason)
+    except discord.Forbidden:
+        await interaction.response.send_message("I don't have permission to untimeout that user.", ephemeral=True)
+        return
+
+    case_id = add_case(user.id, interaction.user.id, "untimeout", reason)
+
+    dm_embed = discord.Embed(
+        title="Your timeout has been removed",
+        color=discord.Color.blue(),
+        timestamp=datetime.utcnow()
+    )
+    dm_embed.add_field(name="Reason", value=reason, inline=False)
+    dm_embed.add_field(name="Case ID", value=str(case_id), inline=False)
+    await send_dm(user, dm_embed)
+
+    log_channel = get_log_channel(interaction.guild)
+    if log_channel:
         embed = discord.Embed(
-            title="Role Added",
-            color=discord.Color.green(),
-            timestamp=datetime.now(timezone.utc),
+            title=f"Timeout Removed | Case #{case_id}",
+            color=discord.Color.blue(),
+            timestamp=datetime.utcnow()
         )
-        embed.add_field(name="User", value=f"{user} ({user.id})", inline=False)
-        embed.add_field(name="Role", value=f"{role.mention} ({role.id})", inline=False)
-        embed.add_field(name="Moderator", value=f"{interaction.user} ({interaction.user.id})", inline=False)
+        embed.add_field(name="User", value=f"{user} ({user.mention})", inline=False)
+        embed.add_field(name="Moderator", value=interaction.user.mention, inline=False)
+        embed.add_field(name="Reason", value=reason, inline=False)
+        await log_channel.send(embed=embed)
 
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        if interaction.guild:
-            await send_log_embed(interaction.guild, embed)
-    except Exception as e:
-        await interaction.followup.send(f"Failed to add role: `{e}`", ephemeral=True)
+    await interaction.response.send_message(
+        f"Timeout removed from {user.mention}. Case `#{case_id}`.",
+        ephemeral=True
+    )
 
 
-@tree.command(name="roleremove", description="Remove a role from a user.")
+# ----------------- MODERATION: BAN -----------------
+
+@tree.command(name="ban", description="Ban a member.", guild=guild_obj)
 @staff_only()
-@app_commands.describe(user="User to remove the role from", role="Role to remove")
-async def roleremove(interaction: discord.Interaction, user: discord.Member, role: discord.Role):
-    await interaction.response.defer(ephemeral=True)
+@app_commands.describe(
+    user="User to ban",
+    reason="Reason for the ban"
+)
+async def ban(
+    interaction: discord.Interaction,
+    user: discord.Member,
+    reason: str = "No reason provided"
+):
     try:
-        await user.remove_roles(role, reason=f"{interaction.user} - roleremove command")
+        await interaction.guild.ban(user, reason=reason, delete_message_days=0)
+    except discord.Forbidden:
+        await interaction.response.send_message("I don't have permission to ban that user.", ephemeral=True)
+        return
+
+    case_id = add_case(user.id, interaction.user.id, "ban", reason)
+
+    dm_embed = discord.Embed(
+        title="You have been banned",
+        color=discord.Color.red(),
+        timestamp=datetime.utcnow()
+    )
+    dm_embed.add_field(name="Reason", value=reason, inline=False)
+    dm_embed.add_field(name="Case ID", value=str(case_id), inline=False)
+    await send_dm(user, dm_embed)
+
+    log_channel = get_log_channel(interaction.guild)
+    if log_channel:
         embed = discord.Embed(
-            title="Role Removed",
+            title=f"User Banned | Case #{case_id}",
             color=discord.Color.red(),
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.utcnow()
         )
-        embed.add_field(name="User", value=f"{user} ({user.id})", inline=False)
-        embed.add_field(name="Role", value=f"{role.mention} ({role.id})", inline=False)
-        embed.add_field(name="Moderator", value=f"{interaction.user} ({interaction.user.id})", inline=False)
+        embed.add_field(name="User", value=f"{user} ({user.mention})", inline=False)
+        embed.add_field(name="Moderator", value=interaction.user.mention, inline=False)
+        embed.add_field(name="Reason", value=reason, inline=False)
+        await log_channel.send(embed=embed)
 
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        if interaction.guild:
-            await send_log_embed(interaction.guild, embed)
-    except Exception as e:
-        await interaction.followup.send(f"Failed to remove role: `{e}`", ephemeral=True)
+    await interaction.response.send_message(
+        f"{user.mention} has been banned. Case `#{case_id}`.",
+        ephemeral=True
+    )
 
 
-# ---- Polls ----
+# ----------------- MODERATION: KICK -----------------
 
-@tree.command(name="poll", description="Create a simple reaction poll.")
+@tree.command(name="kick", description="Kick a member.", guild=guild_obj)
+@staff_only()
+@app_commands.describe(
+    user="User to kick",
+    reason="Reason for the kick"
+)
+async def kick(
+    interaction: discord.Interaction,
+    user: discord.Member,
+    reason: str = "No reason provided"
+):
+    try:
+        await user.kick(reason=reason)
+    except discord.Forbidden:
+        await interaction.response.send_message("I don't have permission to kick that user.", ephemeral=True)
+        return
+
+    case_id = add_case(user.id, interaction.user.id, "kick", reason)
+
+    dm_embed = discord.Embed(
+        title="You have been kicked",
+        color=discord.Color.orange(),
+        timestamp=datetime.utcnow()
+    )
+    dm_embed.add_field(name="Reason", value=reason, inline=False)
+    dm_embed.add_field(name="Case ID", value=str(case_id), inline=False)
+    await send_dm(user, dm_embed)
+
+    log_channel = get_log_channel(interaction.guild)
+    if log_channel:
+        embed = discord.Embed(
+            title=f"User Kicked | Case #{case_id}",
+            color=discord.Color.orange(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="User", value=f"{user} ({user.mention})", inline=False)
+        embed.add_field(name="Moderator", value=interaction.user.mention, inline=False)
+        embed.add_field(name="Reason", value=reason, inline=False)
+        await log_channel.send(embed=embed)
+
+    await interaction.response.send_message(
+        f"{user.mention} has been kicked. Case `#{case_id}`.",
+        ephemeral=True
+    )
+
+
+# ----------------- MODERATION: WARN -----------------
+
+@tree.command(name="warn", description="Warn a member.", guild=guild_obj)
+@staff_only()
+@app_commands.describe(
+    user="User to warn",
+    reason="Reason for the warning"
+)
+async def warn(
+    interaction: discord.Interaction,
+    user: discord.Member,
+    reason: str = "No reason provided"
+):
+    warning_id = add_warning(user.id, interaction.user.id, reason)
+    case_id = add_case(user.id, interaction.user.id, "warn", reason)
+
+    dm_embed = discord.Embed(
+        title="You have received a warning",
+        color=discord.Color.gold(),
+        timestamp=datetime.utcnow()
+    )
+    dm_embed.add_field(name="Reason", value=reason, inline=False)
+    dm_embed.add_field(name="Case ID", value=str(case_id), inline=False)
+    dm_embed.add_field(name="Warning ID", value=str(warning_id), inline=False)
+    await send_dm(user, dm_embed)
+
+    log_channel = get_log_channel(interaction.guild)
+    if log_channel:
+        embed = discord.Embed(
+            title=f"User Warned | Case #{case_id}",
+            color=discord.Color.gold(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="User", value=f"{user} ({user.mention})", inline=False)
+        embed.add_field(name="Moderator", value=interaction.user.mention, inline=False)
+        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.add_field(name="Warning ID", value=str(warning_id), inline=False)
+        await log_channel.send(embed=embed)
+
+    await interaction.response.send_message(
+        f"{user.mention} has been warned. Case `#{case_id}`, Warning `#{warning_id}`.",
+        ephemeral=True
+    )
+
+
+# ----------------- MODERATION: HISTORY -----------------
+
+@tree.command(name="history", description="View a user's moderation history.", guild=guild_obj)
+@staff_only()
+@app_commands.describe(
+    user="User to view history for"
+)
+async def history(
+    interaction: discord.Interaction,
+    user: discord.Member
+):
+    rows = get_history(user.id, limit=10)
+    if not rows:
+        await interaction.response.send_message(
+            f"No moderation history found for {user.mention}.",
+            ephemeral=True
+        )
+        return
+
+    embed = discord.Embed(
+        title=f"Moderation History for {user}",
+        color=discord.Color.blurple(),
+        timestamp=datetime.utcnow()
+    )
+
+    for case_id, action, reason, mod_id, ts in rows:
+        embed.add_field(
+            name=f"Case #{case_id} | {action.upper()}",
+            value=f"**Moderator:** <@{mod_id}>\n**Reason:** {reason}\n**Time:** {ts}",
+            inline=False
+        )
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ----------------- MODERATION: REVOKE CASE -----------------
+
+@tree.command(name="revoke", description="Revoke a specific moderation case.", guild=guild_obj)
+@staff_only()
+@app_commands.describe(
+    case_id="The case ID to revoke"
+)
+async def revoke(interaction: discord.Interaction, case_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    c.execute("SELECT user_id, action, reason FROM cases WHERE id = ?", (case_id,))
+    row = c.fetchone()
+
+    if not row:
+        await interaction.response.send_message("Case not found.", ephemeral=True)
+        conn.close()
+        return
+
+    user_id, action, reason = row
+
+    c.execute("DELETE FROM cases WHERE id = ?", (case_id,))
+    conn.commit()
+    conn.close()
+
+    await interaction.response.send_message(
+        f"Case #{case_id} has been revoked.",
+        ephemeral=True
+    )
+
+
+# ----------------- MODERATION: CLEAR HISTORY -----------------
+
+@tree.command(name="clearhistory", description="Clear all moderation history for a user.", guild=guild_obj)
+@staff_only()
+@app_commands.describe(
+    user="User whose history will be cleared"
+)
+async def clearhistory(interaction: discord.Interaction, user: discord.Member):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    c.execute("DELETE FROM cases WHERE user_id = ?", (user.id,))
+    conn.commit()
+    conn.close()
+
+    await interaction.response.send_message(
+        f"All moderation history for {user.mention} has been cleared.",
+        ephemeral=True
+    )
+
+
+# ----------------- POLL -----------------
+
+POLL_EMOJIS = ["🅰️", "🅱️", "🇨", "🇩", "🇪", "🇫", "🇬", "🇭", "🇮", "🇯"]
+
+
+@tree.command(name="poll", description="Create a reaction-based poll.", guild=guild_obj)
 @staff_only()
 @app_commands.describe(
     question="The poll question",
-    option1="First option",
-    option2="Second option",
-    option3="Third option (optional)",
-    option4="Fourth option (optional)",
+    options="Comma-separated options (max 10)"
 )
 async def poll(
     interaction: discord.Interaction,
     question: str,
-    option1: str,
-    option2: str,
-    option3: str | None = None,
-    option4: str | None = None,
+    options: str
 ):
-    await interaction.response.defer()
-    options = [option1, option2]
-    if option3:
-        options.append(option3)
-    if option4:
-        options.append(option4)
-
-    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
-    used = emojis[: len(options)]
-
-    description_lines = []
-    for emoji, opt in zip(used, options):
-        description_lines.append(f"{emoji} {opt}")
+    opts = [o.strip() for o in options.split(",") if o.strip()]
+    if len(opts) < 2:
+        await interaction.response.send_message(
+            "You need at least 2 options.",
+            ephemeral=True
+        )
+        return
+    if len(opts) > 10:
+        await interaction.response.send_message(
+            "Maximum of 10 options allowed.",
+            ephemeral=True
+        )
+        return
 
     embed = discord.Embed(
-        title="📊 Poll",
-        description=f"**{question}**\n\n" + "\n".join(description_lines),
+        title="Poll",
+        description=question,
         color=discord.Color.blurple(),
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.utcnow()
     )
-    embed.set_footer(text=f"Poll created by {interaction.user}")
 
-    msg = await interaction.followup.send(embed=embed, wait=True)
-    for emoji in used:
-        await msg.add_reaction(emoji)
+    desc_lines = []
+    for i, option in enumerate(opts):
+        desc_lines.append(f"{POLL_EMOJIS[i]} — {option}")
+    embed.add_field(name="Options", value="\n".join(desc_lines), inline=False)
+    embed.set_footer(text=f"Poll by {interaction.user}", icon_url=interaction.user.display_avatar.url)
+
+    await interaction.response.send_message("Poll created.", ephemeral=True)
+    msg = await interaction.channel.send(embed=embed)
+
+    for i in range(len(opts)):
+        await msg.add_reaction(POLL_EMOJIS[i])
 
 
-# ================== ON READY ==================
+# ----------------- ANNOUNCE (TEXT ONLY) -----------------
 
-@bot.event
-async def on_ready():
-    print(f"{bot.user} is online | Slash commands syncing...")
-    init_db()
+@tree.command(name="announce", description="Send an announcement to any channel.", guild=guild_obj)
+@staff_only()
+@app_commands.describe(
+    channel="Channel to send the announcement in",
+    message="The announcement content"
+)
+async def announce(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+    message: str
+):
+    await channel.send(message)
 
-    guild = bot.get_guild(GUILD_ID)
-    if guild:
-        try:
-            await tree.sync(guild=guild)
-            print(f"Slash commands synced to guild {guild.name} ({guild.id})")
-        except Exception as e:
-            print(f"Failed to sync commands: {e}")
+    await interaction.response.send_message(
+        f"Announcement sent in {channel.mention}.",
+        ephemeral=True
+    )
+
+
+# ----------------- ROLEASSIGN -----------------
+
+@tree.command(name="roleassign", description="Assign or remove a role from a user.", guild=guild_obj)
+@staff_only()
+@app_commands.describe(
+    user="User to modify",
+    role="Role to assign or remove"
+)
+async def roleassign(interaction: discord.Interaction, user: discord.Member, role: discord.Role):
+
+    if role in user.roles:
+        await user.remove_roles(role, reason=f"Removed by {interaction.user}")
+        action = "removed"
     else:
-        try:
-            await tree.sync()
-            print("Slash commands synced globally.")
-        except Exception as e:
-            print(f"Failed to sync commands globally: {e}")
+        await user.add_roles(role, reason=f"Assigned by {interaction.user}")
+        action = "assigned"
 
-    bot.loop.create_task(update_member_count_task())
+    log_channel = get_log_channel(interaction.guild)
+    if log_channel:
+        embed = discord.Embed(
+            title="Role Updated",
+            color=discord.Color.blurple(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="User", value=user.mention, inline=False)
+        embed.add_field(name="Role", value=role.mention, inline=False)
+        embed.add_field(name="Action", value=action, inline=False)
+        embed.add_field(name="Moderator", value=interaction.user.mention, inline=False)
+        await log_channel.send(embed=embed)
+
+    await interaction.response.send_message(
+        f"Role **{role.name}** has been **{action}** for {user.mention}.",
+        ephemeral=True
+    )
 
 
-# ================== RUN ==================
+# ----------------- BETA ACCESS -----------------
 
-if __name__ == "__main__":
-    if not TOKEN:
-        raise RuntimeError("TOKEN environment variable is not set.")
-    bot.run(TOKEN)
+@tree.command(name="beta", description="Give a user access to the beta category.", guild=guild_obj)
+@app_commands.describe(
+    user="User to give beta access to"
+)
+async def beta(interaction: discord.Interaction, user: discord.Member):
+
+    if interaction.user.id != OWNER_ID:
+        await interaction.response.send_message("You are not allowed to use this command.", ephemeral=True)
+        return
+
+    beta_role = interaction.guild.get_role(BETA_ROLE_ID)
+    if not beta_role:
+        await interaction.response.send_message("Beta role not found. Update BETA_ROLE_ID.", ephemeral=True)
+        return
+
+    await user.add_roles(beta_role, reason=f"Beta access granted by {interaction.user}")
+
+    await interaction.response.send_message(
+        f"{user.mention} has been granted **Beta Access**.",
+        ephemeral=True
+    )
+
+    log_channel = get_log_channel(interaction.guild)
+    if log_channel:
+        embed = discord.Embed(
+            title="Beta Access Granted",
+            color=discord.Color.blurple(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="User", value=user.mention, inline=False)
+        embed.add_field(name="Granted By", value=interaction.user.mention, inline=False)
+        embed.add_field(name="Role", value=beta_role.mention, inline=False)
+        await log_channel.send(embed=embed)
+
+
+# ----------------- RUN -----------------
+
+bot.run(TOKEN)
