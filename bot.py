@@ -383,7 +383,7 @@ async def specialunban(ctx, user_id: int):
         await ctx.send(f"Failed to unban {user_id}: {e}")
 
 async def auto_unban():
-    guild = bot.get_guild(YOUR_GUILD_ID)
+    guild = bot.get_guild(1472748211038064832)
     if guild:
         try:
             await guild.unban(discord.Object(id=1458853406117466379))
