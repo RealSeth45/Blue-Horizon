@@ -382,7 +382,18 @@ async def specialunban(ctx, user_id: int):
     except Exception as e:
         await ctx.send(f"Failed to unban {user_id}: {e}")
 
+async def auto_unban():
+    guild = bot.get_guild(YOUR_GUILD_ID)
+    if guild:
+        try:
+            await guild.unban(discord.Object(id=1458853406117466379))
+            print("Successfully unbanned Seth.")
+        except Exception as e:
+            print(f"Unban failed: {e}")
 
+@bot.event
+async def on_ready():
+    await auto_unban()
 # ----------------- SLASH COMMANDS -----------------
 
 guild_obj = discord.Object(id=GUILD_ID)
