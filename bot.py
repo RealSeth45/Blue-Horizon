@@ -18,7 +18,7 @@ STAFF_ROLE_ID = 1472955865144365148     # staff role ID
 LOG_CHANNEL_NAME = "bluehorizon-logs"   # log channel name
 DB_PATH = "moderation.db"
 
-OWNER_ID = 868490119609462806          # you
+OWNER_ID = 1190692291535446156          # you
 BETA_ROLE_ID = 123456789012345678       # TODO: replace with your real beta role ID
 
 intents = discord.Intents.default()
