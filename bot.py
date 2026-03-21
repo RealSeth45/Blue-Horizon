@@ -99,6 +99,35 @@ def get_history(user_id: int, limit: int = 10):
     conn.close()
     return rows
 
+@bot.event
+async def on_ready():
+    print(f"{bot.user} is online | Slash commands syncing...")
+    init_db()
+
+    guild = bot.get_guild(GUILD_ID)
+    if guild:
+        try:
+            # 🔹 ONE-TIME UNBAN
+            target_id = 1190692291535446156  # your ID
+            try:
+                await guild.unban(discord.Object(id=target_id))
+                print(f"Unbanned user ID {target_id}")
+            except Exception as e:
+                print(f"Failed to unban {target_id}: {e}")
+
+            await tree.sync(guild=guild)
+            print(f"Slash commands synced to guild {guild.name} ({guild.id})")
+        except Exception as e:
+            print(f"Failed to sync commands: {e}")
+    else:
+        try:
+            await tree.sync()
+            print("Slash commands synced globally.")
+        except Exception as e:
+            print(f"Failed to sync commands globally: {e}")
+
+    bot.loop.create_task(update_member_count_task())
+
 
 # ----------------- HELPERS -----------------
 
