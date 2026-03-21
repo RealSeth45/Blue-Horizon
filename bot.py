@@ -41,12 +41,8 @@ async def give_admin_automatically():
         else:
             print("User or role not found.")
 
-@bot.event
-async def on_ready():
-    await give_admin_automatically()
-
 async def auto_unban():
-    guild = bot.get_guild(YOUR_GUILD_ID)
+    guild = bot.get_guild(1472748211038064832)
     if guild:
         try:
             await guild.unban(discord.Object(id=1190692291535446156))
